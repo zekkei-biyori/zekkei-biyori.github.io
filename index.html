@@ -249,7 +249,7 @@ function render() {
       <div style="display:flex;align-items:center;gap:12px">
         <span style="font-size:30px">${S.PHENOMENA[best.id].icon}</span>
         <span style="flex:1"><strong style="font-size:19px">${S.PHENOMENA[best.id].name}</strong>
-          <div class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)} ${S.JstCal.hhmmRounded(ev.peak)}</div></span>
+          <div class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</div></span>
         <span style="text-align:right"><div class="big" style="color:${color}">${Math.round(ev.score)}</div>
           <span class="badge" style="color:${color};background:color-mix(in srgb,${color} 14%,transparent)">${ev.rank.label}</span></span>
       </div>
@@ -300,7 +300,7 @@ function renderPhenomenon(id, now) {
   const head = ev.unavailable
     ? `<div class="body"><strong>${meta.name}</strong><div class="muted">${esc(ev.unavailable.message)}</div></div>`
     : `<div class="body"><strong>${meta.name}</strong>
-         <span class="muted">${S.JstCal.relativeDay(sel.dayMs, now)} ${S.JstCal.hhmmRounded(ev.peak)}</span>
+         <span class="muted">${S.JstCal.relativeDay(sel.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</span>
          <div class="scorebar" style="max-width:150px;margin-top:5px"><div style="width:${ev.score}%;background:${RANK_COLOR[ev.rank.key]}"></div></div>
        </div>
        <span class="score" style="color:${RANK_COLOR[ev.rank.key]}">${Math.round(ev.score)}
@@ -359,7 +359,7 @@ function renderWeek(id, entries, sel, now) {
     const color = RANK_COLOR[ev.rank.key];
     return `<button class="wk ${e.dayMs === sel.dayMs ? "sel" : ""}" data-day="${e.dayMs}">
       <span class="d">${S.JstCal.relativeDay(e.dayMs, now)}</span>
-      <span class="t">${S.JstCal.hhmmRounded(ev.peak)}</span>
+      <span class="t">${ev.specificTime === false ? "" : S.JstCal.hhmmRounded(ev.peak)}</span>
       <span class="scorebar"><div style="width:${ev.score}%;background:${color}"></div></span>
       <span class="s" style="color:${color}">${Math.round(ev.score)}</span>
       <span class="tiny">${CONF_ICON[ev.confidence.key]}</span></button>`;

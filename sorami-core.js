@@ -933,10 +933,14 @@
       if (da < db || (da === db && entry[0] < representative[0])) representative = entry;
     }
     const displayWindow = representative[1].refinedWindow || window;
+    // 虹は「その1時間」を特定できたときだけ時刻に意味がある。
+    // 雨の予報がない日に日の出時刻を出すと、いかにもその時刻に出そうに見えてしまう。
+    const specificTime = scorerId !== "rainbow" || !!representative[1].refinedWindow;
     return {
       phenomenon: scorerId,
       window: displayWindow,
       peak: peakOf(displayWindow),
+      specificTime,
       unavailable: null,
       score: representative[1].score,
       base: representative[1].base,
