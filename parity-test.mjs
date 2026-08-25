@@ -1,0 +1,71 @@
+// Swift 版（テスト108件で検証済み）と JS 移植の突き合わせ。
+// 固定フィクスチャ（2026-08-22 練馬・実際は大雨だった日）を両実装に通し、
+// スコア・内訳・天文計算が一致することを検証する。
+// 「移植したつもり」を目視で済ませないための仕組み（8/22 のミスと同型の失敗の防止）。
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const S = require("./sorami-core.js");
+
+const expected = JSON.parse(readFileSync(new URL("./parity-expected.json", import.meta.url)));
+const homeRaw = JSON.parse(readFileSync(
+  "/Users/okadayudai/Developer/Sorami/SoramiCore/Tests/SoramiCoreTests/Fixtures/nerima_2026-08-22_home.json"));
+const offsetsRaw = JSON.parse(readFileSync(
+  "/Users/okadayudai/Developer/Sorami/SoramiCore/Tests/SoramiCoreTests/Fixtures/nerima_2026-08-22_offsets.json"));
+
+let failures = 0;
+function check(name, actual, exp, tol = 1e-6) {
+  const ok = Math.abs(actual - exp) <= tol;
+  if (!ok) { failures++; console.log(`  NG ${name}: js=${actual} swift=${exp} (差 ${actual - exp})`); }
+  else console.log(`  ok ${name}: ${actual.toFixed ? actual.toFixed(4) : actual}`);
+}
+
+const lat = 35.73, lon = 139.64;
+const day = Date.UTC(2026, 7, 21, 15); // 2026-08-22 00:00 JST
+
+console.log("== 天文 ==");
+check("sunset", S.Sun.eventTime("sunset", day, lat, lon) / 1000, expected.sunset_epoch, 0.5);
+check("sunrise", S.Sun.eventTime("sunrise", day, lat, lon) / 1000, expected.sunrise_epoch, 0.5);
+check("astroDusk", S.Sun.eventTime("astronomicalDusk", day, lat, lon) / 1000, expected.astro_dusk_epoch, 0.5);
+check("sunsetAzimuth", S.Sun.position(S.Sun.eventTime("sunset", day, lat, lon), lat, lon).azimuth,
+      expected.sunset_azimuth, 0.001);
+check("moonIllumEclipse", S.Moon.state(948429840000, lat, lon).illuminatedFraction,
+      expected.moon_illum_eclipse, 1e-6);
+
+console.log("== 夕焼け評価（フィクスチャ） ==");
+const home = S.decodeLocation(homeRaw);
+const offsetList = offsetsRaw.map(S.decodeLocation);
+const bundle = {
+  home,
+  sunsetOffsets: { low: offsetList[0], mid: offsetList[1], high: offsetList[2] },
+  sunriseOffsets: null,
+};
+const place = { latitude: lat, longitude: lon, terrain: null, elevation: null };
+const ev = S.evaluate("sunset", day, bundle, place);
+check("score", ev.score, expected.sunset_score, 0.001);
+check("base", ev.base, expected.sunset_base);
+check("spread.low", ev.spread[0], expected.sunset_spread[0], 0.001);
+check("spread.high", ev.spread[1], expected.sunset_spread[1], 0.001);
+check("peak", ev.peak / 1000, expected.sunset_peak_epoch, 0.5);
+for (const m of S.MODELS) check(`perModel.${m}`, ev.perModel[m], expected.sunset_perModel[m], 0.001);
+
+console.log("== 内訳（ラベルと寄与の完全一致） ==");
+const expFactors = expected.sunset_factors;
+if (ev.factors.length !== expFactors.length) {
+  failures++; console.log(`  NG factor数: js=${ev.factors.length} swift=${expFactors.length}`);
+  console.log("  js:", ev.factors.map((f) => f.label));
+  console.log("  swift:", expFactors.map((f) => f.label));
+} else {
+  ev.factors.forEach((f, i) => {
+    if (f.label !== expFactors[i].label) { failures++; console.log(`  NG label[${i}]: js='${f.label}' swift='${expFactors[i].label}'`); }
+    else check(`factor '${f.label}'`, f.c, expFactors[i].c, 0.001);
+  });
+}
+
+console.log("== 星空評価 ==");
+const starry = S.evaluate("starrySky", day, bundle, place);
+check("starryScore", starry.score, expected.starry_score, 0.001);
+for (const m of S.MODELS) check(`starry.${m}`, starry.perModel[m], expected.starry_perModel[m], 0.001);
+
+console.log(failures === 0 ? "\nPARITY OK — Swift と一致" : `\nPARITY NG — ${failures} 件不一致`);
+process.exit(failures === 0 ? 0 : 1);

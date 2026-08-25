@@ -1,0 +1,1210 @@
+/*
+ * Sorami Web — ロジック層
+ *
+ * Swift 版 SoramiCore（テスト108件で検証済み）からの移植。数式・閾値・文言を揃えてあり、
+ * parity-test.mjs が Swift 側の出力（parity-expected.json）と突き合わせて一致を検証する。
+ * 閾値には出典があり、根拠のない数値をここへ足さないこと（Thresholds のコメント参照）。
+ */
+(function (global) {
+  "use strict";
+
+  const JST_OFFSET = 9 * 3600 * 1000;
+  const DEG = Math.PI / 180;
+
+  // ---------------------------------------------------------------- Geo
+  const Geo = {
+    earthRadiusKm: 6371.0088,
+    normalizeDegrees(d) { const x = d % 360; return x < 0 ? x + 360 : x; },
+    normalizeLongitude(lon) { let l = lon % 360; if (l > 180) l -= 360; if (l < -180) l += 360; return l; },
+    destination(lat, lon, bearingDeg, distanceKm) {
+      const ang = distanceKm / Geo.earthRadiusKm, b = bearingDeg * DEG;
+      const p1 = lat * DEG, l1 = lon * DEG;
+      const p2 = Math.asin(Math.sin(p1) * Math.cos(ang) + Math.cos(p1) * Math.sin(ang) * Math.cos(b));
+      const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(ang) * Math.cos(p1),
+                                 Math.cos(ang) - Math.sin(p1) * Math.sin(p2));
+      return { latitude: p2 / DEG, longitude: Geo.normalizeLongitude(l2 / DEG) };
+    },
+    distanceKm(aLat, aLon, bLat, bLon) {
+      const p1 = aLat * DEG, p2 = bLat * DEG;
+      const dp = p2 - p1, dl = (bLon - aLon) * DEG;
+      const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return 2 * Geo.earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
+    },
+  };
+
+  // ---------------------------------------------------------------- JST 暦
+  // JST は夏時間が無いので固定 +9h で暦日計算ができる。
+  const JstCal = {
+    startOfDay(ms) { return Math.floor((ms + JST_OFFSET) / 86400000) * 86400000 - JST_OFFSET; },
+    addDays(ms, n) { return ms + n * 86400000; },
+    setHour(dayStartMs, hour) { return dayStartMs + hour * 3600000; },
+    sameDay(a, b) { return JstCal.startOfDay(a) === JstCal.startOfDay(b); },
+    hhmm(ms) {
+      const d = new Date(ms + JST_OFFSET);
+      return `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+    },
+    // 表示は分に四捨五入。切り捨てると暦の表記と1分ずれる。
+    hhmmRounded(ms) { return JstCal.hhmm(Math.round(ms / 60000) * 60000); },
+    monthDay(ms) {
+      const d = new Date(ms + JST_OFFSET);
+      return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+    },
+    weekday(ms) { return "日月火水木金土"[new Date(ms + JST_OFFSET).getUTCDay()]; },
+    relativeDay(ms, nowMs) {
+      const target = JstCal.startOfDay(ms), today = JstCal.startOfDay(nowMs);
+      if (target === today) return "今日";
+      if (target === today + 86400000) return "明日";
+      return `${JstCal.monthDay(ms)}(${JstCal.weekday(ms)})`;
+    },
+  };
+
+  // ---------------------------------------------------------------- 太陽（NOAA/Meeus）
+  const Sun = {
+    julianDay(ms) { return ms / 86400000 + 2440587.5; },
+    fromJulianDay(jd) { return (jd - 2440587.5) * 86400000; },
+    julianCentury(jd) { return (jd - 2451545.0) / 36525; },
+    apparentLongitude(t) {
+      const l0 = Geo.normalizeDegrees(280.46646 + t * (36000.76983 + t * 0.0003032));
+      const m = 357.52911 + t * (35999.05029 - 0.0001537 * t);
+      const mr = m * DEG;
+      const c = Math.sin(mr) * (1.914602 - t * (0.004817 + 0.000014 * t))
+              + Math.sin(2 * mr) * (0.019993 - 0.000101 * t)
+              + Math.sin(3 * mr) * 0.000289;
+      return l0 + c - 0.00569 - 0.00478 * Math.sin((125.04 - 1934.136 * t) * DEG);
+    },
+    obliquityCorrected(t) {
+      const seconds = 21.448 - t * (46.815 + t * (0.00059 - t * 0.001813));
+      const mean = 23 + (26 + seconds / 60) / 60;
+      return mean + 0.00256 * Math.cos((125.04 - 1934.136 * t) * DEG);
+    },
+    declination(t) {
+      const lambda = Sun.apparentLongitude(t) * DEG;
+      const eps = Sun.obliquityCorrected(t) * DEG;
+      return Math.asin(Math.sin(eps) * Math.sin(lambda)) / DEG;
+    },
+    equationOfTime(t) {
+      const eps = Sun.obliquityCorrected(t) * DEG;
+      const l0 = Geo.normalizeDegrees(280.46646 + t * (36000.76983 + t * 0.0003032)) * DEG;
+      const m = (357.52911 + t * (35999.05029 - 0.0001537 * t)) * DEG;
+      const e = 0.016708634 - t * (0.000042037 + 0.0000001267 * t);
+      const y = Math.tan(eps / 2) ** 2;
+      const v = y * Math.sin(2 * l0) - 2 * e * Math.sin(m)
+              + 4 * e * y * Math.sin(m) * Math.cos(2 * l0)
+              - 0.5 * y * y * Math.sin(4 * l0) - 1.25 * e * e * Math.sin(2 * m);
+      return v * 4 / DEG;
+    },
+    refraction(elevation) {
+      if (elevation > 85) return 0;
+      const te = Math.tan(elevation * DEG);
+      let arcsec;
+      if (elevation > 5) arcsec = 58.1 / te - 0.07 / te ** 3 + 0.000086 / te ** 5;
+      else if (elevation > -0.575)
+        arcsec = 1735 + elevation * (-518.2 + elevation * (103.4 + elevation * (-12.79 + elevation * 0.711)));
+      else arcsec = -20.772 / te;
+      return arcsec / 3600;
+    },
+    position(ms, lat, lon) {
+      const jd = Sun.julianDay(ms), t = Sun.julianCentury(jd);
+      const decl = Sun.declination(t), eqTime = Sun.equationOfTime(t);
+      const minutesUTC = (jd - Math.floor(jd - 0.5) - 0.5) * 1440;
+      let tst = (minutesUTC + eqTime + 4 * lon) % 1440;
+      if (tst < 0) tst += 1440;
+      let ha = tst / 4 - 180;
+      if (ha < -180) ha += 360;
+      const latR = lat * DEG, declR = decl * DEG, haR = ha * DEG;
+      const cosZen = Math.min(1, Math.max(-1,
+        Math.sin(latR) * Math.sin(declR) + Math.cos(latR) * Math.cos(declR) * Math.cos(haR)));
+      const zenith = Math.acos(cosZen) / DEG;
+      const rawElevation = 90 - zenith;
+      let azimuth;
+      const sinZen = Math.sin(zenith * DEG);
+      if (Math.abs(sinZen) < 1e-9 || Math.abs(Math.cos(latR)) < 1e-9) {
+        azimuth = ha > 0 ? 180 : 0;
+      } else {
+        const cosAz = Math.min(1, Math.max(-1, (Math.sin(latR) * cosZen - Math.sin(declR)) / (Math.cos(latR) * sinZen)));
+        const a = Math.acos(cosAz) / DEG;
+        azimuth = ha > 0 ? Geo.normalizeDegrees(a + 180) : Geo.normalizeDegrees(540 - a);
+      }
+      return { elevation: rawElevation + Sun.refraction(rawElevation), azimuth, declination: decl };
+    },
+    EVENTS: {
+      sunrise: { zenith: 90.833, morning: true }, sunset: { zenith: 90.833, morning: false },
+      civilDawn: { zenith: 96, morning: true }, civilDusk: { zenith: 96, morning: false },
+      nauticalDawn: { zenith: 102, morning: true }, nauticalDusk: { zenith: 102, morning: false },
+      astronomicalDawn: { zenith: 108, morning: true }, astronomicalDusk: { zenith: 108, morning: false },
+    },
+    hourAngle(zenith, lat, decl) {
+      const cosH = (Math.cos(zenith * DEG) - Math.sin(lat * DEG) * Math.sin(decl * DEG))
+                 / (Math.cos(lat * DEG) * Math.cos(decl * DEG));
+      if (cosH < -1 || cosH > 1) return null;
+      return Math.acos(cosH) / DEG;
+    },
+    // 基準 0h UTC は対象ローカル暦日から 1 度だけ決めて固定する。
+    // 反復のたびに取り直すと JST では基準日が 1 日ずつ後退する（Swift 版で実際に踏んだバグ）。
+    eventTime(eventName, dayMs, lat, lon) {
+      const spec = Sun.EVENTS[eventName];
+      const noonLocal = JstCal.setHour(JstCal.startOfDay(dayMs), 12);
+      const anchor = Math.floor(Sun.julianDay(noonLocal) - 0.5) + 0.5;
+      let guess = noonLocal;
+      for (let i = 0; i < 3; i++) {
+        const t = Sun.julianCentury(Sun.julianDay(guess));
+        const ha = Sun.hourAngle(spec.zenith, lat, Sun.declination(t));
+        if (ha === null) return null;
+        const eqTime = Sun.equationOfTime(t);
+        const offsetMinutes = 720 - 4 * (lon + (spec.morning ? ha : -ha)) - eqTime;
+        guess = Sun.fromJulianDay(anchor + offsetMinutes / 1440);
+      }
+      return guess;
+    },
+  };
+
+  // ---------------------------------------------------------------- 月（Schlyter）
+  const Moon = {
+    state(ms, lat, lon) {
+      const d = Sun.julianDay(ms) - 2451543.5;
+      const rad = DEG;
+      const wSun = 282.9404 + 4.70935e-5 * d;
+      const eSun = 0.016709 - 1.151e-9 * d;
+      const mSun = Geo.normalizeDegrees(356.0470 + 0.9856002585 * d);
+      const eAnomS = mSun + eSun / rad * Math.sin(mSun * rad) * (1 + eSun * Math.cos(mSun * rad));
+      const xvS = Math.cos(eAnomS * rad) - eSun;
+      const yvS = Math.sqrt(1 - eSun * eSun) * Math.sin(eAnomS * rad);
+      const vS = Math.atan2(yvS, xvS) / rad;
+      const lonSun = Geo.normalizeDegrees(vS + wSun);
+      const lSun = Geo.normalizeDegrees(mSun + wSun);
+
+      const nM = 125.1228 - 0.0529538083 * d;
+      const iM = 5.1454;
+      const wM = 318.0634 + 0.1643573223 * d;
+      const aM = 60.2666, eM = 0.054900;
+      const mM = Geo.normalizeDegrees(115.3654 + 13.0649929509 * d);
+      let eA = mM + eM / rad * Math.sin(mM * rad) * (1 + eM * Math.cos(mM * rad));
+      eA -= (eA - eM / rad * Math.sin(eA * rad) - mM) / (1 - eM * Math.cos(eA * rad));
+      const x = aM * (Math.cos(eA * rad) - eM);
+      const y = aM * Math.sqrt(1 - eM * eM) * Math.sin(eA * rad);
+      const v = Math.atan2(y, x) / rad;
+      let r = Math.sqrt(x * x + y * y);
+      const vw = (v + wM) * rad, nR = nM * rad, iR = iM * rad;
+      const xe = r * (Math.cos(nR) * Math.cos(vw) - Math.sin(nR) * Math.sin(vw) * Math.cos(iR));
+      const ye = r * (Math.sin(nR) * Math.cos(vw) + Math.cos(nR) * Math.sin(vw) * Math.cos(iR));
+      const ze = r * Math.sin(vw) * Math.sin(iR);
+      let mlon = Math.atan2(ye, xe) / rad;
+      let mlat = Math.atan2(ze, Math.sqrt(xe * xe + ye * ye)) / rad;
+
+      const lM = Geo.normalizeDegrees(mM + wM + nM);
+      const D = lM - lSun, F = lM - nM;
+      mlon += -1.274 * Math.sin((mM - 2 * D) * rad) + 0.658 * Math.sin(2 * D * rad)
+            - 0.186 * Math.sin(mSun * rad) - 0.059 * Math.sin((2 * mM - 2 * D) * rad)
+            - 0.057 * Math.sin((mM - 2 * D + mSun) * rad) + 0.053 * Math.sin((mM + 2 * D) * rad)
+            + 0.046 * Math.sin((2 * D - mSun) * rad) + 0.041 * Math.sin((mM - mSun) * rad)
+            - 0.035 * Math.sin(D * rad) - 0.031 * Math.sin((mM + mSun) * rad)
+            - 0.015 * Math.sin((2 * F - 2 * D) * rad) + 0.011 * Math.sin((mM - 4 * D) * rad);
+      mlat += -0.173 * Math.sin((F - 2 * D) * rad) - 0.055 * Math.sin((mM - F - 2 * D) * rad)
+            - 0.046 * Math.sin((mM + F - 2 * D) * rad) + 0.033 * Math.sin((F + 2 * D) * rad)
+            + 0.017 * Math.sin((2 * mM + F) * rad);
+      r += -0.58 * Math.cos((mM - 2 * D) * rad) - 0.46 * Math.cos(2 * D * rad);
+      mlon = Geo.normalizeDegrees(mlon);
+
+      const obl = (23.4393 - 3.563e-7 * d) * rad;
+      const xh = r * Math.cos(mlon * rad) * Math.cos(mlat * rad);
+      const yh = r * Math.sin(mlon * rad) * Math.cos(mlat * rad);
+      const zh = r * Math.sin(mlat * rad);
+      const xEq = xh, yEq = yh * Math.cos(obl) - zh * Math.sin(obl), zEq = yh * Math.sin(obl) + zh * Math.cos(obl);
+      const ra = Geo.normalizeDegrees(Math.atan2(yEq, xEq) / rad);
+      const dec = Math.atan2(zEq, Math.sqrt(xEq * xEq + yEq * yEq)) / rad;
+
+      const gmst0 = Geo.normalizeDegrees(lSun + 180);
+      const utHours = (d - Math.floor(d)) * 24;
+      const lst = Geo.normalizeDegrees(gmst0 + utHours * 15 + lon);
+      const haR = (lst - ra) * rad;
+      const latR = lat * rad, decR = dec * rad;
+      const cx = Math.cos(haR) * Math.cos(decR), cy = Math.sin(haR) * Math.cos(decR), cz = Math.sin(decR);
+      const xHor = cx * Math.sin(latR) - cz * Math.cos(latR);
+      const yHor = cy;
+      const zHor = cx * Math.cos(latR) + cz * Math.sin(latR);
+      const elevation = Math.asin(Math.min(1, Math.max(-1, zHor))) / rad;
+      const azimuth = Geo.normalizeDegrees(Math.atan2(yHor, xHor) / rad + 180);
+      const elong = Math.acos(Math.min(1, Math.max(-1, Math.cos((lonSun - mlon) * rad) * Math.cos(mlat * rad)))) / rad;
+      const phaseAngle = 180 - elong;
+      const illuminated = (1 + Math.cos(phaseAngle * rad)) / 2;
+      const age = Geo.normalizeDegrees(mlon - lonSun) / 360 * 29.530588;
+      return {
+        elevation, azimuth, illuminatedFraction: illuminated, age,
+        skyBrightnessFactor: elevation > 0 ? illuminated * Math.sin(elevation * rad) : 0,
+      };
+    },
+    peakBrightness(startMs, endMs, lat, lon, stepMs = 600000) {
+      let peak = 0;
+      for (let t = startMs; t <= endMs; t += stepMs) {
+        peak = Math.max(peak, Moon.state(t, lat, lon).skyBrightnessFactor);
+      }
+      return peak;
+    },
+  };
+
+  // ---------------------------------------------------------------- スコア曲線
+  const Curve = {
+    triangular(v, low, peak, high) {
+      if (v <= low || v >= high) return 0;
+      return v < peak ? (v - low) / (peak - low) : (high - v) / (high - peak);
+    },
+    ramp(v, from, to) {
+      if (from === to) return v >= from ? 1 : 0;
+      return Math.min(1, Math.max(0, (v - from) / (to - from)));
+    },
+    band(v, lo, hi, tolerance) {
+      if (v >= lo && v <= hi) return 1;
+      const distance = v < lo ? lo - v : v - hi;
+      return Math.max(0, 1 - distance / tolerance);
+    },
+    clamp(v, lo = 0, hi = 100) { return Math.min(hi, Math.max(lo, v)); },
+    median(values) {
+      if (!values.length) return null;
+      const s = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+    },
+  };
+
+  // ---------------------------------------------------------------- 閾値（出典付き。Swift 版 Thresholds と同値）
+  const T = {
+    sunset: {
+      base: 50,
+      highCloudLow: 10, highCloudPeak: 45, highCloudHigh: 85, highCloudBonus: 25,
+      midCloudLow: 5, midCloudPeak: 30, midCloudHigh: 70, midCloudBonus: 10,
+      canvasVividMinimum: 20, canvasPresentMinimum: 8, noVividCeiling: 78, clearSkyCeiling: 62,
+      midCloudCanvasWeight: 0.7,
+      highCloudOvercastStart: 85, highCloudOvercastPenalty: 12,
+      lowCloudClear: 20, lowCloudBonus: 10, lowCloudPenaltyStart: 40, lowCloudPenaltyFull: 85, lowCloudPenalty: 30,
+      sunwardLowPenaltyStart: 40, sunwardLowPenaltyFull: 80, sunwardLowPenalty: 35, sunwardHighBonus: 10,
+      overcastRH: 90, upperRH: [50, 70], midRH: [60, 80], lowerRH: [80, 90], rhTolerance: 25,
+      upperRHBonus: 8, midRHBonus: 8, lowerRHBonus: 5, overcastRHPenalty: 10,
+      obscuredStart: 40, obscuredFull: 90,
+      precipThreshold: 0.1, precipFull: 2.0, precipPenalty: 40, precipCeiling: 30,
+      visGood: 20000, visPoor: 10000, visBonus: 5, visPenalty: 10,
+      windowBefore: 20 * 60000, windowAfter: 15 * 60000,
+      source: "SunsetWx特許 US10459119 の気圧面別湿度帯と可視距離式に基づく",
+    },
+    starry: {
+      base: 100, cloudPenalty: 60, precipThreshold: 0.1, precipPenalty: 40,
+      moonlightPenalty: 25, humidityStart: 85, visPoor: 15000, atmospherePenalty: 10,
+      elevStart: 1000, elevFull: 2500, elevBonus: 5,
+      // 光害。天頂の空の明るさ mpsas（等級/平方秒）で減点する。
+      // 22.0 が自然の空、都心は 17 前後（対数尺度で約100倍明るい）。
+      // 減点幅 45 は本アプリの見立て（文献値ではない）。都心では晴れて無月でも
+      // 「平凡」止まりになる設計で、それが実際の星の見え方に近い。
+      lpPristine: 21.9, lpWorst: 17.0, lpMaxPenalty: 45,
+      source: "雲量・降水・月明かり（輝面比×高度）・視程・光害（Lorenz光害アトラス2025）から算出",
+    },
+    seaOfClouds: {
+      rangeThreshold: 10.2, rangeFull: 16, windCalm: 0.85, windFail: 2.5,
+      prevRainMm: 0.5, humidityThreshold: 90, nightCloudClear: 30, nightCloudFail: 80,
+      minElevation: 250, base: 10, rangeBonus: 35, windBonus: 30,
+      humidityBonus: 12, prevRainBonus: 8, nightCloudBonus: 15,
+      source: "宙畑・秩父の決定木（気温差>10.2℃ かつ 風速<0.85m/s）に基づく経験則。地形依存が大きい",
+    },
+    diamondDust: {
+      extremeCold: -15, extremeProb: 0.84, coldHumidTemp: -10, coldHumidHumidity: 90, coldHumidProb: 0.17,
+      clearSkyCloud: 20, calmWind: 2, windowStart: 6, windowEnd: 9, clearBonus: 8, calmBonus: 7,
+      source: "北海道立総合研究機構・旭川2シーズン観測（最低気温≤−15℃で発生確率84%、16/19日）",
+    },
+    rime: {
+      tempThreshold: -5, tempFull: -12, windLo: 1, windHi: 5, windTolerance: 4,
+      saturation: 95, humidityFloor: 85, minElevation: 500,
+      base: 5, tempBonus: 35, windBonus: 25, humidityBonus: 30, durationFull: 8, durationBonus: 10,
+      source: "気温≤−5℃・風速1〜5m/s・過冷却水滴（湿度≥95%で代替）。蔵王の樹氷研究に基づく",
+    },
+    rainbow: {
+      maxSunElev: 42, optSunElev: 15, minSunElev: 0, precipThreshold: 0.1,
+      base: 20, sunBonus: 25, precipBonus: 30, sunlightBonus: 25,
+      // 直射日光の判定: 晴天時の直達日射の目安 900×sin(太陽高度) W/m² に対する比で見る。
+      // 厳密な大気透過モデルではなく目安（比 5% で 0、35% 以上で満点となる傾斜）。
+      // 雨の1時間平均に直達が残っている＝セルの合間に日が差す（にわか雨型）ことの代理。
+      clearSkyDirectMax: 900, sunlightFitLo: 0.05, sunlightFitHi: 0.35,
+      source: "太陽高度≤42°・降水・直射日光から推定。雨域が対日点の方角にあるかはモデル解像度では解けないため参考値",
+    },
+  };
+
+  // ---------------------------------------------------------------- 時系列
+  // 欠測は null のまま運ぶ。0 に丸めると「視程 0km＝濃霧」のような正反対の意味になる。
+  class Series {
+    constructor(times, columns) { this.times = times; this.columns = columns; }
+    get stepMs() { return this.times.length >= 2 ? this.times[1] - this.times[0] : 3600000; }
+    isSupported(v) { const c = this.columns[v]; return !!c && c.some((x) => x !== null && x !== undefined); }
+    valueAtIndex(v, i) {
+      const c = this.columns[v];
+      if (!c || i < 0 || i >= c.length) return null;
+      const x = c[i];
+      return x === undefined ? null : x;
+    }
+    indexNearest(ms) {
+      if (!this.times.length) return null;
+      let best = 0, bestDelta = Infinity;
+      this.times.forEach((t, i) => { const d = Math.abs(t - ms); if (d < bestDelta) { bestDelta = d; best = i; } });
+      return bestDelta <= 1800000 ? best : null;
+    }
+    valueAt(v, ms) { const i = this.indexNearest(ms); return i === null ? null : this.valueAtIndex(v, i); }
+    // 時別値は「その1時間を代表する値」。バケット [t, t+step) と窓の重なりで選ぶ。
+    // 点包含にすると、日の入り前後 20 分のような正時をまたがない窓が 1 件も拾えない。
+    indices(startMs, endMs) {
+      const step = this.stepMs, out = [];
+      this.times.forEach((t, i) => { if (t < endMs && t + step > startMs) out.push(i); });
+      return out;
+    }
+    values(v, s, e) { return this.indices(s, e).map((i) => this.valueAtIndex(v, i)).filter((x) => x !== null); }
+    mean(v, s, e) { const a = this.values(v, s, e); return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; }
+    max(v, s, e) { const a = this.values(v, s, e); return a.length ? Math.max(...a) : null; }
+    min(v, s, e) { const a = this.values(v, s, e); return a.length ? Math.min(...a) : null; }
+    sum(v, s, e) { const a = this.values(v, s, e); return a.length ? a.reduce((x, y) => x + y, 0) : null; }
+  }
+
+  const MODELS = ["jma_msm", "icon_seamless", "ecmwf_ifs025", "gfs_seamless"];
+  const MODEL_NAMES = { jma_msm: "気象庁MSM", icon_seamless: "ICON", ecmwf_ifs025: "ECMWF", gfs_seamless: "GFS" };
+  const HOME_VARS = [
+    "temperature_2m", "relative_humidity_2m", "dew_point_2m", "precipitation", "weather_code",
+    "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "visibility",
+    "wind_speed_10m", "surface_pressure", "direct_radiation", "showers",
+    "relative_humidity_925hPa", "relative_humidity_850hPa", "relative_humidity_700hPa",
+    "relative_humidity_500hPa", "relative_humidity_300hPa", "relative_humidity_200hPa",
+  ];
+  const OFFSET_VARS = ["cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "precipitation"];
+  // 特許 US10459119 の可視距離式 d[mile] = 1.32 × √(高度[ft]) → km。
+  const CLOUD_LAYERS = [
+    { key: "low", altitudeFt: 6000, variable: "cloud_cover_low" },
+    { key: "mid", altitudeFt: 15000, variable: "cloud_cover_mid" },
+    { key: "high", altitudeFt: 30000, variable: "cloud_cover_high" },
+  ].map((l) => ({ ...l, offsetKm: 1.32 * Math.sqrt(l.altitudeFt) * 1.609344 }));
+
+  // ---------------------------------------------------------------- Open-Meteo
+  function decodeLocation(payload) {
+    const times = payload.hourly.time.map((t) => t * 1000);
+    const byModel = {};
+    for (const model of MODELS) {
+      const columns = {};
+      for (const v of HOME_VARS) {
+        const c = payload.hourly[`${v}_${model}`];
+        if (c) columns[v] = c;
+      }
+      if (Object.keys(columns).length) byModel[model] = new Series(times, columns);
+    }
+    return {
+      grid: { latitude: payload.latitude, longitude: payload.longitude, elevation: payload.elevation },
+      byModel,
+    };
+  }
+
+  function buildURL(coords, vars, days, pastDays) {
+    const p = new URLSearchParams({
+      latitude: coords.map((c) => c.latitude.toFixed(4)).join(","),
+      longitude: coords.map((c) => c.longitude.toFixed(4)).join(","),
+      hourly: vars.join(","),
+      models: MODELS.join(","),
+      timezone: "auto",
+      // unixtime は真の UTC エポックで返る（実測確認済み）。文字列時刻のローカル解釈を避ける。
+      timeformat: "unixtime",
+      forecast_days: String(days),
+    });
+    if (pastDays > 0) p.set("past_days", String(pastDays));
+    return `https://api.open-meteo.com/v1/forecast?${p}`;
+  }
+
+  async function fetchJSON(url) {
+    const res = await fetch(url);
+    const body = await res.json();
+    if (!res.ok || body.error) throw new Error(body.reason || `HTTP ${res.status}`);
+    return body;
+  }
+
+  // 自地点＋夕焼け方位＋朝焼け方位の 3 リクエスト。
+  // オフセット点は雲量 4 要素のみに絞って転送量とAPIコストを抑える。
+  async function fetchForecast(lat, lon, days = 8) {
+    const now = Date.now();
+    const sunsetAt = Sun.eventTime("sunset", now, lat, lon);
+    const sunriseAt = Sun.eventTime("sunrise", now, lat, lon);
+    const sunsetBearing = sunsetAt ? Sun.position(sunsetAt, lat, lon).azimuth : 270;
+    const sunriseBearing = sunriseAt ? Sun.position(sunriseAt, lat, lon).azimuth : 90;
+    const offsetsFor = (bearing) => CLOUD_LAYERS.map((l) => Geo.destination(lat, lon, bearing, l.offsetKm));
+
+    const [homeRaw, sunsetRaw, sunriseRaw] = await Promise.all([
+      fetchJSON(buildURL([{ latitude: lat, longitude: lon }], HOME_VARS, days, 1)),
+      fetchJSON(buildURL(offsetsFor(sunsetBearing), OFFSET_VARS, days, 0)),
+      fetchJSON(buildURL(offsetsFor(sunriseBearing), OFFSET_VARS, days, 0)),
+    ]);
+    const asList = (raw) => (Array.isArray(raw) ? raw : [raw]).map(decodeLocation);
+    const toOffsets = (list) => Object.fromEntries(CLOUD_LAYERS.map((l, i) => [l.key, list[i]]));
+    return {
+      home: asList(homeRaw)[0],
+      sunsetOffsets: toOffsets(asList(sunsetRaw)),
+      sunriseOffsets: toOffsets(asList(sunriseRaw)),
+      sunsetBearing, sunriseBearing,
+      fetchedAt: now,
+    };
+  }
+
+  // ---------------------------------------------------------------- ModelScore
+  // 上下限で切り詰めた差分は「頭打ち」「下支え」の明示行にする。
+  // 黙って切ると内訳の合計が表示スコアと合わず、「なぜこの点数か」が説明できない。
+  function buildScore(base, factors, ceiling, ceilingReason, refinedWindow) {
+    const raw = factors.reduce((s, f) => s + f.c, base);
+    let final = Curve.clamp(raw);
+    if (ceiling !== null && ceiling !== undefined) final = Math.min(final, ceiling);
+    const ordered = [...factors].sort((a, b) => Math.abs(b.c) - Math.abs(a.c));
+    if (Math.abs(final - raw) > 0.005) {
+      const capped = final < raw;
+      ordered.push({
+        label: capped ? "頭打ち" : "下支え",
+        c: final - raw,
+        detail: capped ? (ceilingReason || "この条件では上限に達している") : "下限で止めている",
+      });
+    }
+    return { score: final, base, factors: ordered, unavailable: null, refinedWindow: refinedWindow || null };
+  }
+  const unavailable = (kind, message) => ({ score: 0, base: 0, factors: [], unavailable: { kind, message }, refinedWindow: null });
+  const pct = (v) => `${Math.round(v)}%`;
+  const f1 = (v) => v.toFixed(1);
+  // 負のゼロを正のゼロへ（UI に -0.0 と出さない）。
+  const factor = (label, c, detail) => ({ label, c: c === 0 ? 0 : c, detail: detail || "" });
+
+  // ---------------------------------------------------------------- スコアラ
+  const RANKS = [
+    { key: "spectacular", label: "絶景", min: 85 },
+    { key: "good", label: "良好", min: 65 },
+    { key: "fair", label: "平凡", min: 40 },
+    { key: "poor", label: "不向き", min: -1 },
+  ];
+  const rankOf = (score) => RANKS.find((r) => score >= r.min);
+  const confidenceOf = (width) => (width < 15
+    ? { key: "high", label: "高", caption: "モデルの見解が揃っています" }
+    : width < 30
+      ? { key: "medium", label: "中", caption: "モデルの見解に幅があります" }
+      : { key: "low", label: "低", caption: "モデルの見解が割れています" });
+
+  function cloudDetail(raw, overcast, heavilyObscured, absent, present) {
+    // 空一面かどうかを先に見る。覆い尽くしでも三角カーブは 0 を返すため、
+    // 順序を逆にすると「一面の巻層雲」を「雲がない」と説明してしまう。
+    if (overcast > 1) return "空一面を覆い、光が拡散して平板になる";
+    if (raw <= 0) return absent;
+    if (heavilyObscured) return "下層雲に隠れて見えにくい";
+    return present;
+  }
+
+  function afterglowScorer(kind) {
+    const eventName = kind === "sunset" ? "sunset" : "sunrise";
+    return {
+      id: kind, source: T.sunset.source,
+      window(dayMs, input) {
+        const ev = Sun.eventTime(eventName, dayMs, input.lat, input.lon);
+        if (ev === null) return null;
+        const s = T.sunset;
+        return kind === "sunset"
+          ? [ev - s.windowBefore, ev + s.windowAfter]
+          : [ev - s.windowAfter, ev + s.windowBefore];
+      },
+      peak(dayMs, window, input) {
+        return Sun.eventTime(eventName, dayMs, input.lat, input.lon) ?? window[0];
+      },
+      score(window, input) {
+        const s = T.sunset, series = input.home, [ws, we] = window;
+        const high = series.mean("cloud_cover_high", ws, we);
+        const mid = series.mean("cloud_cover_mid", ws, we);
+        const low = series.mean("cloud_cover_low", ws, we);
+        if (high === null || mid === null || low === null) return unavailable("missingData", "雲量が得られませんでした");
+
+        const factors = [];
+        const visibleFraction = 1 - Curve.ramp(low, s.obscuredStart, s.obscuredFull);
+        const heavilyObscured = visibleFraction < 0.7;
+
+        const highRaw = Curve.triangular(high, s.highCloudLow, s.highCloudPeak, s.highCloudHigh);
+        const highOvercast = Curve.ramp(high, s.highCloudOvercastStart, 100) * s.highCloudOvercastPenalty;
+        const highBonus = highRaw * s.highCloudBonus * visibleFraction - highOvercast;
+        factors.push(factor(`高層雲 ${pct(high)}`, highBonus,
+          cloudDetail(highRaw, highOvercast, heavilyObscured,
+            high < s.highCloudPeak ? "光を受ける高層雲がない" : "多すぎて光が抜けない",
+            "巻雲が光を受ける面になる")));
+
+        const midRaw = Curve.triangular(mid, s.midCloudLow, s.midCloudPeak, s.midCloudHigh);
+        const midBonus = midRaw * s.midCloudBonus * visibleFraction;
+        factors.push(factor(`中層雲 ${pct(mid)}`, midBonus,
+          cloudDetail(midRaw, 0, heavilyObscured,
+            mid < s.midCloudLow ? "中層雲がほとんどない" : "多すぎて光が抜けない",
+            "空に立体感が出る")));
+
+        if (low <= s.lowCloudClear) {
+          factors.push(factor(`低層雲 ${pct(low)}`, s.lowCloudBonus, "頭上が開けている"));
+        } else if (low >= s.lowCloudPenaltyStart) {
+          const ratio = Curve.ramp(low, s.lowCloudPenaltyStart, s.lowCloudPenaltyFull);
+          factors.push(factor(`低層雲 ${pct(low)}`, -ratio * s.lowCloudPenalty, "頭上を覆って空が見えない"));
+        } else {
+          const ratio = 1 - Curve.ramp(low, s.lowCloudClear, s.lowCloudPenaltyStart);
+          factors.push(factor(`低層雲 ${pct(low)}`, ratio * s.lowCloudBonus, "頭上が開けている"));
+        }
+
+        const sunwardLow = input.offsets?.low?.mean("cloud_cover_low", ws, we) ?? null;
+        if (sunwardLow !== null) {
+          const penalty = -Curve.ramp(sunwardLow, s.sunwardLowPenaltyStart, s.sunwardLowPenaltyFull) * s.sunwardLowPenalty;
+          factors.push(factor(`太陽方位側の低層雲 ${pct(sunwardLow)}`, penalty,
+            penalty < -1 ? "約165km先で光が遮られる" : "光路は開けている"));
+        }
+        const sunwardHigh = input.offsets?.high?.mean("cloud_cover_high", ws, we) ?? null;
+        if (sunwardHigh !== null) {
+          const bonus = Curve.triangular(sunwardHigh, s.highCloudLow, s.highCloudPeak, s.highCloudHigh) * s.sunwardHighBonus;
+          factors.push(factor(`太陽方位側の高層雲 ${pct(sunwardHigh)}`, bonus, "約368km先で光を受ける雲"));
+        }
+
+        // 気圧面の相対湿度。モデルが返さない面がある（jma_msm の 200hPa は全 null）ので取れた面だけ平均する。
+        const levels = [
+          ["上層", ["relative_humidity_300hPa", "relative_humidity_200hPa"], s.upperRH, s.upperRHBonus],
+          ["中層", ["relative_humidity_500hPa", "relative_humidity_700hPa"], s.midRH, s.midRHBonus],
+          ["下層", ["relative_humidity_925hPa", "relative_humidity_850hPa"], s.lowerRH, s.lowerRHBonus],
+        ];
+        for (const [name, vars, band, bonus] of levels) {
+          const available = vars
+            .filter((v) => series.isSupported(v))
+            .map((v) => series.mean(v, ws, we))
+            .filter((x) => x !== null);
+          if (!available.length) continue;
+          const rh = available.reduce((a, b) => a + b, 0) / available.length;
+          if (rh > s.overcastRH) {
+            factors.push(factor(`${name}の湿度 ${pct(rh)}`, -s.overcastRHPenalty, "90%超は曇天域"));
+          } else {
+            const fit = Curve.band(rh, band[0], band[1], s.rhTolerance);
+            factors.push(factor(`${name}の湿度 ${pct(rh)}`, fit * bonus, `最適帯 ${band[0]}〜${band[1]}%`));
+          }
+        }
+
+        // 光を受ける面。特許は高層雲を vivid に必須とし、雲ひとつない夕空を "average" とする。
+        // 単一の上限にすると全モデルが同じ値へ張り付き、モデル差が消えて誤った「信頼度高」になる。
+        let ceiling = null, ceilingReason = "";
+        const canvas = Math.max(high, mid * s.midCloudCanvasWeight);
+        if (canvas < s.canvasPresentMinimum) {
+          ceiling = s.clearSkyCeiling; ceilingReason = "頭上に光を受ける雲がない（快晴の夕空）";
+        } else if (canvas < s.canvasVividMinimum) {
+          ceiling = s.noVividCeiling; ceilingReason = "光を受ける雲が薄く、絶景までは届かない";
+        }
+
+        const precip = series.max("precipitation", ws, we);
+        if (precip !== null && precip > s.precipThreshold) {
+          const ratio = Curve.ramp(precip, s.precipThreshold, s.precipFull);
+          factors.push(factor(`降水 ${f1(precip)}mm`, -(0.4 + 0.6 * ratio) * s.precipPenalty, "降っていると焼けない"));
+          ceiling = Math.min(ceiling ?? Infinity, s.precipCeiling);
+          ceilingReason = "降水があると焼けない";
+        }
+
+        if (series.isSupported("visibility")) {
+          const vis = series.mean("visibility", ws, we);
+          if (vis !== null) {
+            if (vis >= s.visGood) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, s.visBonus, "遠くまで抜けている"));
+            else if (vis <= s.visPoor) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, -s.visPenalty, "霞んで色が乗らない"));
+          }
+        }
+
+        return buildScore(s.base, factors, ceiling, ceilingReason);
+      },
+    };
+  }
+
+  const starrySkyScorer = {
+    id: "starrySky", source: T.starry.source,
+    window(dayMs, input) {
+      const nextDay = JstCal.addDays(dayMs, 1);
+      const pairs = [["astronomicalDusk", "astronomicalDawn"], ["nauticalDusk", "nauticalDawn"], ["civilDusk", "civilDawn"]];
+      for (const [dusk, dawn] of pairs) {
+        const s = Sun.eventTime(dusk, dayMs, input.lat, input.lon);
+        const e = Sun.eventTime(dawn, nextDay, input.lat, input.lon);
+        if (s !== null && e !== null && e > s) return [s, e];
+      }
+      return null;
+    },
+    score(window, input) {
+      const s = T.starry, series = input.home, [ws, we] = window;
+      const cloud = series.mean("cloud_cover", ws, we);
+      if (cloud === null) return unavailable("missingData", "雲量が得られませんでした");
+      const factors = [];
+      factors.push(factor(`雲量 ${pct(cloud)}`, -Curve.ramp(cloud, 0, 100) * s.cloudPenalty,
+        cloud < 20 ? "ほぼ雲なし" : cloud > 70 ? "厚い雲に覆われる" : "雲が出入りする"));
+      const precip = series.max("precipitation", ws, we);
+      if (precip !== null && precip > s.precipThreshold) {
+        factors.push(factor(`降水 ${f1(precip)}mm`, -s.precipPenalty, "雨天では観測できない"));
+      }
+      const moonPeak = Moon.peakBrightness(ws, we, input.lat, input.lon);
+      const moonState = Moon.state(ws + (we - ws) / 2, input.lat, input.lon);
+      factors.push(factor(`月明かり 輝面比${pct(moonState.illuminatedFraction * 100)}`, -moonPeak * s.moonlightPenalty,
+        moonPeak < 0.05 ? "月明かりの影響はほぼ無い" : `月齢${Math.round(moonState.age)}・夜間の最大高度で評価`));
+      let atmospherePenalty = 0, atmosphereDetail = "";
+      const humidity = series.mean("relative_humidity_2m", ws, we);
+      if (humidity !== null && humidity > s.humidityStart) {
+        atmospherePenalty = Curve.ramp(humidity, s.humidityStart, 100) * s.atmospherePenalty;
+        atmosphereDetail = `湿度 ${pct(humidity)}・霞みやすい`;
+      }
+      if (series.isSupported("visibility")) {
+        const vis = series.mean("visibility", ws, we);
+        if (vis !== null && vis < s.visPoor) {
+          const p = Curve.ramp(vis, s.visPoor, 0) * s.atmospherePenalty;
+          if (p > atmospherePenalty) { atmospherePenalty = p; atmosphereDetail = `視程 ${Math.round(vis / 1000)}km`; }
+        }
+      }
+      if (atmospherePenalty > 0) factors.push(factor("大気の透明度", -atmospherePenalty, atmosphereDetail));
+      // 光害はその地点の素質。天気と違い日ごとには変わらないが、
+      // 同じ快晴・無月でも都心と山では見える星がまるで違う。それをスコアに反映する。
+      if (input.lightPollution) {
+        const { mpsas } = input.lightPollution;
+        const penalty = Curve.ramp(s.lpPristine - mpsas, 0, s.lpPristine - s.lpWorst) * s.lpMaxPenalty;
+        factors.push(factor(`光害 ${LightPollution.zoneLabel(mpsas)}`, -penalty,
+          `天頂の空の明るさ ${mpsas.toFixed(1)} 等級/平方秒（22が自然の空。VIIRS衛星実測由来）`));
+      }
+      const elevation = input.elevation;
+      if (elevation > s.elevStart) {
+        factors.push(factor(`標高 ${Math.round(elevation)}m`,
+          Curve.ramp(elevation, s.elevStart, s.elevFull) * s.elevBonus, "気柱が薄く空が暗い"));
+      }
+      return buildScore(s.base, factors);
+    },
+  };
+
+  const seaOfCloudsScorer = {
+    id: "seaOfClouds", source: T.seaOfClouds.source,
+    window(dayMs, input) {
+      const sunrise = Sun.eventTime("sunrise", dayMs, input.lat, input.lon);
+      return sunrise === null ? null : [sunrise - 3600000, sunrise + 3600000];
+    },
+    peak(dayMs, window, input) { return Sun.eventTime("sunrise", dayMs, input.lat, input.lon) ?? window[0]; },
+    score(window, input) {
+      const s = T.seaOfClouds, series = input.home, [ws, we] = window;
+      if (["basinFloor", "plain", "coast"].includes(input.terrain)) {
+        return unavailable("terrain", "雲海を見下ろせる地形ではありません");
+      }
+      if (!input.terrain && input.elevation < s.minElevation) {
+        return unavailable("terrain", `標高 ${Math.round(input.elevation)}m。雲海を見下ろすには低すぎます`);
+      }
+      const todayStart = JstCal.startOfDay(ws);
+      const prevStart = JstCal.addDays(todayStart, -1);
+      const previousMax = series.max("temperature_2m", prevStart, todayStart);
+      if (previousMax === null) return unavailable("missingData", "前日の気温が得られませんでした（過去分の取得が必要）");
+      const todayMin = series.min("temperature_2m", todayStart, we);
+      if (todayMin === null) return unavailable("missingData", "当日の気温が得られませんでした");
+
+      const factors = [];
+      const range = previousMax - todayMin;
+      const rangeFit = Curve.ramp(range, s.rangeThreshold - 3, s.rangeFull);
+      factors.push(factor(`気温差 ${f1(range)}℃`, rangeFit * s.rangeBonus,
+        range > s.rangeThreshold
+          ? `前日最高 ${f1(previousMax)}℃ → 当日最低 ${f1(todayMin)}℃。放射冷却の目安 10.2℃ を超える`
+          : "放射冷却の目安 10.2℃ に届かない"));
+      const wind = series.mean("wind_speed_10m", ws, we);
+      if (wind !== null) {
+        const calm = 1 - Curve.ramp(wind, s.windCalm, s.windFail);
+        factors.push(factor(`風速 ${f1(wind)}m/s`, calm * s.windBonus,
+          wind < s.windCalm ? "0.85m/s 未満。雲海が崩れない" : "風があると雲海は流される"));
+      }
+      const humidity = series.mean("relative_humidity_2m", ws, we);
+      if (humidity !== null) {
+        factors.push(factor(`早朝の湿度 ${pct(humidity)}`,
+          Curve.ramp(humidity, s.humidityThreshold - 10, 100) * s.humidityBonus, "逆転層内が飽和していること"));
+      }
+      const prevRain = series.sum("precipitation", prevStart, todayStart);
+      if (prevRain !== null) {
+        factors.push(factor(`前日の降水 ${f1(prevRain)}mm`,
+          Curve.ramp(prevRain, 0, s.prevRainMm * 6) * s.prevRainBonus,
+          prevRain > s.prevRainMm ? "水蒸気の供給がある" : "水蒸気の供給が乏しい"));
+      }
+      const nightCloud = series.mean("cloud_cover", todayStart, ws);
+      if (nightCloud !== null) {
+        const clear = 1 - Curve.ramp(nightCloud, s.nightCloudClear, s.nightCloudFail);
+        factors.push(factor(`夜間の雲量 ${pct(nightCloud)}`, clear * s.nightCloudBonus,
+          nightCloud < s.nightCloudClear ? "放射冷却が効く" : "雲が保温して冷え込まない"));
+      }
+      return buildScore(s.base, factors);
+    },
+  };
+
+  const diamondDustScorer = {
+    id: "diamondDust", source: T.diamondDust.source,
+    window(dayMs, input) {
+      const start = JstCal.setHour(JstCal.startOfDay(dayMs), T.diamondDust.windowStart);
+      return [start, JstCal.setHour(JstCal.startOfDay(dayMs), T.diamondDust.windowEnd)];
+    },
+    score(window, input) {
+      const s = T.diamondDust, series = input.home, [ws, we] = window;
+      const dayStart = JstCal.startOfDay(ws);
+      const minTemp = series.min("temperature_2m", dayStart, we);
+      if (minTemp === null) return unavailable("missingData", "気温が得られませんでした");
+      if (minTemp > 0) return unavailable("outOfSeason", `最低気温 ${f1(minTemp)}℃。氷点下になりません`);
+      const factors = [];
+      let base;
+      if (minTemp <= s.extremeCold) {
+        base = s.extremeProb * 100;
+        factors.push(factor(`最低気温 ${f1(minTemp)}℃`, 0, "−15℃以下。旭川2シーズンの観測で 16/19日（84%）が発生"));
+      } else if (minTemp <= s.coldHumidTemp) {
+        base = s.coldHumidProb * 100;
+        factors.push(factor(`最低気温 ${f1(minTemp)}℃`, 0, "−15〜−10℃。この帯の発生は 7/41日（17%）"));
+        const humidity = series.mean("relative_humidity_2m", ws, we);
+        if (humidity !== null && humidity > s.coldHumidHumidity) {
+          factors.push(factor(`湿度 ${pct(humidity)}`, 25, "論文は高湿度日の発生を確認（条件付き確率は未公表）"));
+        }
+      } else {
+        base = 3;
+        factors.push(factor(`最低気温 ${f1(minTemp)}℃`, 0, "発生条件の −10℃ に届かない"));
+      }
+      const cloud = series.mean("cloud_cover", ws, we);
+      if (cloud !== null) {
+        factors.push(factor(`雲量 ${pct(cloud)}`, (1 - Curve.ramp(cloud, s.clearSkyCloud, 80)) * s.clearBonus,
+          "放射冷却と、氷晶がきらめくための日射"));
+      }
+      const wind = series.mean("wind_speed_10m", ws, we);
+      if (wind !== null) {
+        factors.push(factor(`風速 ${f1(wind)}m/s`, (1 - Curve.ramp(wind, s.calmWind, 6)) * s.calmBonus, "ほぼ無風であること"));
+      }
+      return buildScore(base, factors);
+    },
+  };
+
+  const rimeScorer = {
+    id: "rime", source: T.rime.source,
+    window(dayMs) {
+      const d = JstCal.startOfDay(dayMs);
+      return [JstCal.setHour(d, 0), JstCal.setHour(d, 9)];
+    },
+    score(window, input) {
+      const s = T.rime, series = input.home, [ws, we] = window;
+      if (["plain", "coast"].includes(input.terrain)) return unavailable("terrain", "霧氷が着く山地ではありません");
+      if (input.elevation < s.minElevation) {
+        return unavailable("terrain", `標高 ${Math.round(input.elevation)}m。霧氷はおもに標高 500m 以上で見られます`);
+      }
+      const temp = series.mean("temperature_2m", ws, we);
+      if (temp === null) return unavailable("missingData", "気温が得られませんでした");
+      if (temp > 5) return unavailable("outOfSeason", `気温 ${f1(temp)}℃。霧氷の季節ではありません`);
+      const factors = [];
+      factors.push(factor(`気温 ${f1(temp)}℃`, Curve.ramp(temp, s.tempThreshold, s.tempFull) * s.tempBonus,
+        temp <= s.tempThreshold ? "−5℃以下。樹氷が発達する温度域" : "−5℃ に届かず着氷しにくい"));
+      const humidity = series.mean("relative_humidity_2m", ws, we);
+      if (humidity !== null) {
+        factors.push(factor(`湿度 ${pct(humidity)}`, Curve.ramp(humidity, s.humidityFloor, s.saturation) * s.humidityBonus,
+          humidity >= s.saturation ? "雲中・霧中とみなせる（過冷却水滴の供給）" : "過冷却水滴が不足。地上湿度による代替判定"));
+      }
+      const wind = series.mean("wind_speed_10m", ws, we);
+      if (wind !== null) {
+        factors.push(factor(`風速 ${f1(wind)}m/s`, Curve.band(wind, s.windLo, s.windHi, s.windTolerance) * s.windBonus,
+          wind >= s.windLo && wind <= s.windHi ? "1〜5m/s。過冷却水滴が運ばれ成長する"
+            : wind < s.windLo ? "弱すぎて水滴が運ばれない" : "強すぎて粗氷寄りになる"));
+      }
+      let qualifying = 0;
+      for (const i of series.indices(ws, we)) {
+        const t = series.valueAtIndex("temperature_2m", i);
+        const h = series.valueAtIndex("relative_humidity_2m", i);
+        const w = series.valueAtIndex("wind_speed_10m", i);
+        if (t !== null && h !== null && w !== null
+            && t <= s.tempThreshold && h >= s.saturation && w >= s.windLo && w <= s.windHi) qualifying++;
+      }
+      if (qualifying > 0) {
+        factors.push(factor(`条件成立 ${qualifying}時間`,
+          Curve.ramp(qualifying, 0, s.durationFull) * s.durationBonus, "着氷は時間をかけて成長する"));
+      }
+      return buildScore(s.base, factors);
+    },
+  };
+
+  const rainbowScorer = {
+    id: "rainbow", source: T.rainbow.source,
+    window(dayMs, input) {
+      const sunrise = Sun.eventTime("sunrise", dayMs, input.lat, input.lon);
+      const sunset = Sun.eventTime("sunset", dayMs, input.lat, input.lon);
+      return sunrise !== null && sunset !== null && sunset > sunrise ? [sunrise, sunset] : null;
+    },
+    score(window, input) {
+      const s = T.rainbow, series = input.home, [ws, we] = window;
+      const indices = series.indices(ws, we);
+      if (!indices.length) return unavailable("missingData", "日中の予報が得られませんでした");
+
+      // 「雨の予報がない」は評価不能ではなく、虹が出ないという**評価**。
+      // unavailable にするとそのモデルがアンサンブルの母数から黙って抜け、
+      // 残った雨予報のモデルだけで高スコアが出る（4モデル中3が雨なしの日に
+      // 1モデルの81点がそのまま表示される事故が実際に起きた）。
+      let sawRain = false, sawRainHighSun = false;
+      let best = null;
+      for (const i of indices) {
+        const hourStart = series.times[i];
+        const mid = hourStart + series.stepMs / 2;
+        const precip = series.valueAtIndex("precipitation", i);
+        if (precip === null || precip <= s.precipThreshold) continue;
+        sawRain = true;
+        const sun = Sun.position(mid, input.lat, input.lon);
+        if (sun.elevation <= s.minSunElev) continue;
+        if (sun.elevation > s.maxSunElev) { sawRainHighSun = true; continue; }
+
+        const factors = [];
+        const elevFit = 1 - Curve.ramp(sun.elevation, s.optSunElev, s.maxSunElev);
+        factors.push(factor(`太陽高度 ${Math.round(sun.elevation)}°`, elevFit * s.sunBonus,
+          `42°以下。対日点は方位 ${Math.round(Geo.normalizeDegrees(sun.azimuth + 180))}° の方向`));
+
+        // にわか雨（対流性）はセルの合間に日が差す虹の典型パターン。層状の雨と言い分ける。
+        const showers = series.valueAtIndex("showers", i);
+        const convective = showers !== null && showers >= precip * 0.5;
+        factors.push(factor(`${convective ? "にわか雨" : "降水"} ${f1(precip)}mm`,
+          Curve.ramp(precip, s.precipThreshold, 2.0) * s.precipBonus,
+          convective ? "対流性の雨。セルの合間に日が差しやすい虹の典型" : "雨滴がなければ虹は出ない"));
+
+        // 直射日光。太陽を背にした観測者に日が当たっていることが虹の必須条件。
+        // 晴天時の直達日射の目安（900×sin高度）に対する比で「雨の時間に日が差すか」を見る。
+        const direct = series.valueAtIndex("direct_radiation", i);
+        if (direct !== null) {
+          const potential = s.clearSkyDirectMax * Math.sin(sun.elevation * DEG);
+          const fit = potential > 0 ? Curve.ramp(direct / potential, s.sunlightFitLo, s.sunlightFitHi) : 0;
+          factors.push(factor(`直射日光 ${Math.round(direct)}W/m²`, fit * s.sunlightBonus,
+            fit > 0.5 ? "雨の時間にも日が差す見込み" : "雨雲に覆われ日が差しにくい"));
+        }
+
+        const candidate = buildScore(s.base, factors, null, "", [hourStart, hourStart + series.stepMs]);
+        if (!best || candidate.score > best.score) best = candidate;
+      }
+      if (best) return best;
+      // 条件不成立も点数として返す（母数に残す）。
+      if (sawRainHighSun) {
+        return buildScore(0, [factor("雨は太陽の高い時間帯のみ", 5,
+          "太陽高度42°超では主虹が地平線下に隠れる")]);
+      }
+      if (sawRain) {
+        return buildScore(0, [factor("雨は夜間のみ", 2, "太陽が出ていなければ虹は出ない")]);
+      }
+      return buildScore(0, [factor("雨の予報がない", 2, "雨滴がなければ虹は出ない")]);
+    },
+  };
+
+  const SCORERS = {
+    sunset: afterglowScorer("sunset"),
+    sunrise: afterglowScorer("sunrise"),
+    starrySky: starrySkyScorer,
+    seaOfClouds: seaOfCloudsScorer,
+    rainbow: rainbowScorer,
+    rime: rimeScorer,
+    diamondDust: diamondDustScorer,
+  };
+  const PHENOMENA = {
+    sunset: { name: "夕焼け", icon: "🌇", order: 0 },
+    starrySky: { name: "星空", icon: "✨", order: 1 },
+    sunrise: { name: "朝焼け", icon: "🌅", order: 2 },
+    seaOfClouds: { name: "雲海", icon: "🌫️", order: 3 },
+    rainbow: { name: "虹", icon: "🌈", order: 4 },
+    rime: { name: "霧氷", icon: "❄️", order: 5 },
+    diamondDust: { name: "ダイヤモンドダスト", icon: "💠", order: 6 },
+  };
+
+  // ---------------------------------------------------------------- アンサンブル
+  // 中央値を採るのは 2026-08-22 18:00 JST の実測（jma_msm 0.0mm vs icon 3.1mm）に基づく。
+  // 単一モデルに賭けない。表示スコアと内訳は中央値に最も近い 1 モデル由来で揃える
+  // （内訳を平均すると合計が表示スコアと一致せず「なぜこの点数か」が説明できない）。
+  function evaluate(scorerId, dayMs, bundle, place) {
+    const scorer = SCORERS[scorerId];
+    const offsets = scorerId === "sunrise" ? bundle.sunriseOffsets : bundle.sunsetOffsets;
+    const models = MODELS.filter((m) => bundle.home.byModel[m]);
+    if (!models.length) return null;
+
+    const makeInput = (model) => ({
+      home: bundle.home.byModel[model],
+      offsets: offsets
+        ? Object.fromEntries(Object.entries(offsets).map(([k, loc]) => [k, loc.byModel[model]]).filter(([, s]) => s))
+        : {},
+      lat: place.latitude, lon: place.longitude,
+      terrain: place.terrain || null,
+      elevation: place.elevation ?? bundle.home.grid.elevation,
+      lightPollution: place.lightPollution || null,
+    });
+
+    const reference = makeInput(models[0]);
+    const window = scorer.window(dayMs, reference);
+    if (!window) return null;
+
+    const results = {};
+    for (const m of models) results[m] = scorer.score(window, makeInput(m));
+    const evaluated = Object.entries(results).filter(([, r]) => !r.unavailable);
+    const peakOf = (win) => (scorer.peak ? scorer.peak(dayMs, win, reference) : win[0]);
+
+    if (!evaluated.length) {
+      const reason = Object.values(results).find((r) => r.unavailable).unavailable;
+      return { phenomenon: scorerId, window, peak: peakOf(window), unavailable: reason,
+               score: 0, base: 0, factors: [], perModel: {}, spread: [0, 0],
+               confidence: confidenceOf(999), source: scorer.source };
+    }
+    const scores = evaluated.map(([, r]) => r.score);
+    const median = Curve.median(scores);
+    const low = Math.min(...scores), high = Math.max(...scores);
+    let representative = evaluated[0];
+    for (const entry of evaluated) {
+      const da = Math.abs(entry[1].score - median), db = Math.abs(representative[1].score - median);
+      if (da < db || (da === db && entry[0] < representative[0])) representative = entry;
+    }
+    const displayWindow = representative[1].refinedWindow || window;
+    return {
+      phenomenon: scorerId,
+      window: displayWindow,
+      peak: peakOf(displayWindow),
+      unavailable: null,
+      score: representative[1].score,
+      base: representative[1].base,
+      factors: representative[1].factors,
+      perModel: Object.fromEntries(evaluated.map(([m, r]) => [m, r.score])),
+      spread: [low, high],
+      confidence: confidenceOf(high - low),
+      source: scorer.source,
+      rank: rankOf(representative[1].score),
+    };
+  }
+
+  function evaluateWeek(scorerId, bundle, place, days = 7, nowMs = Date.now()) {
+    const out = [];
+    for (let i = 0; i < days; i++) {
+      const dayMs = JstCal.addDays(JstCal.startOfDay(nowMs), i);
+      const e = evaluate(scorerId, dayMs, bundle, place);
+      if (e) out.push({ dayMs, evaluation: e });
+    }
+    return out;
+  }
+
+  // 週間表に出す気象値（モデル横断の中央値。表示スコアと考え方を揃える）。
+  function readingAt(bundle, scorerId, ms) {
+    const offsets = scorerId === "sunrise" ? bundle.sunriseOffsets : bundle.sunsetOffsets;
+    const med = (loc, v) => {
+      if (!loc) return null;
+      const values = Object.values(loc.byModel)
+        .filter((s) => s.isSupported(v))
+        .map((s) => s.valueAt(v, ms))
+        .filter((x) => x !== null);
+      return Curve.median(values);
+    };
+    return {
+      temperature: med(bundle.home, "temperature_2m"),
+      humidity: med(bundle.home, "relative_humidity_2m"),
+      precipitation: med(bundle.home, "precipitation"),
+      visibility: med(bundle.home, "visibility"),
+      cloudLow: med(bundle.home, "cloud_cover_low"),
+      cloudMid: med(bundle.home, "cloud_cover_mid"),
+      cloudHigh: med(bundle.home, "cloud_cover_high"),
+      sunwardLow: med(offsets?.low, "cloud_cover_low"),
+      sunwardMid: med(offsets?.mid, "cloud_cover_mid"),
+      sunwardHigh: med(offsets?.high, "cloud_cover_high"),
+    };
+  }
+
+  // ---------------------------------------------------------------- 光害（Lorenz 光害アトラス 2025）
+  // David Lorenz が VIIRS 衛星実測（NOAA/コロラド鉱山大学 EOG の年次データ）から作成し
+  // GitHub Pages で公開しているアトラス。600×600 点・1/120° 解像度の 5°×5° バイナリタイル。
+  // 復号方式は公開ページの実装から採った（左下隅が2バイト実値、以降は隣接差分の1バイト列）。
+  // 実測検証: 東京駅 17.2 mpsas（都心）/ 阿智村 21.5（日本有数の暗さ）— 既知の明暗と一致。
+  const LightPollution = {
+    year: 2025,
+    _cache: {},
+    tileFor(lat, lon) {
+      const lonFDL = ((lon + 180) % 360 + 360) % 360;
+      const latFS = lat + 65;
+      return { tx: Math.floor(lonFDL / 5) + 1, ty: Math.floor(latFS / 5) + 1, lonFDL, latFS };
+    },
+    decode(int8, ix, iy) {
+      let value = 128 * int8[0] + int8[1];
+      for (let i = 1; i < iy; i++) value += int8[600 * i + 1];
+      for (let i = 1; i < ix; i++) value += int8[600 * (iy - 1) + 1 + i];
+      const ratio = (5 / 195) * (Math.exp(0.0195 * value) - 1);   // 人工光/自然光 比
+      const mpsas = 22.0 - 5.0 * Math.log(1.0 + ratio) / Math.log(100);  // 等級/平方秒
+      return { ratio, mpsas };
+    },
+    zoneLabel(mpsas) {
+      if (mpsas >= 21.7) return "ほぼ天然の暗さ";
+      if (mpsas >= 21.0) return "暗い空";
+      if (mpsas >= 20.0) return "郊外の空";
+      if (mpsas >= 18.5) return "市街地の明るい空";
+      return "都心の空";
+    },
+    async lookup(lat, lon) {
+      const { tx, ty, lonFDL, latFS } = LightPollution.tileFor(lat, lon);
+      if (ty < 1 || ty > 28) return null;
+      const key = `${tx}_${ty}`;
+      if (!LightPollution._cache[key]) {
+        const url = `https://djlorenz.github.io/astronomy/binary_tiles/${LightPollution.year}/binary_tile_${key}.dat.gz`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const stream = res.body.pipeThrough(new DecompressionStream("gzip"));
+        const buf = await new Response(stream).arrayBuffer();
+        LightPollution._cache[key] = new Int8Array(buf);
+      }
+      const ix = Math.round(120 * (lonFDL - 5 * (tx - 1) + 1 / 240));
+      const iy = Math.round(120 * (latFS - 5 * (ty - 1) + 1 / 240));
+      return LightPollution.decode(LightPollution._cache[key], ix, iy);
+    },
+  };
+
+  // ---------------------------------------------------------------- アメダス実況
+  // 公式APIではない（気象庁サイトの内部エンドポイント）。取れなければ黙って機能を落とす。
+  const Amedas = {
+    base: "https://www.jma.go.jp/bosai/amedas",
+    async latestTime() {
+      const res = await fetch(`${Amedas.base}/data/latest_time.txt`);
+      if (!res.ok) throw new Error("latest_time");
+      return new Date((await res.text()).trim()).getTime();
+    },
+    async stations() {
+      const raw = await fetchJSON(`${Amedas.base}/const/amedastable.json`);
+      const out = [];
+      for (const [id, e] of Object.entries(raw)) {
+        if (!Array.isArray(e.lat) || !Array.isArray(e.lon) || !e.kjName) continue;
+        out.push({
+          id, name: e.kjName, kana: e.knName || "",
+          latitude: e.lat[0] + e.lat[1] / 60, longitude: e.lon[0] + e.lon[1] / 60,
+          elevation: e.alt ?? 0,
+        });
+      }
+      return out;
+    },
+    blockURL(stationId, ms) {
+      const d = new Date(ms + JST_OFFSET);
+      const day = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+      const block = Math.floor(d.getUTCHours() / 3) * 3;
+      return `${Amedas.base}/data/point/${stationId}/${day}_${String(block).padStart(2, "0")}.json`;
+    },
+    qcValue(entry, key) {
+      const pair = entry[key];
+      if (!Array.isArray(pair) || pair.length < 2) return null;
+      const [value, flag] = pair;
+      // QCフラグ 0 以外は採用しない。null は欠測のまま。
+      return typeof value === "number" && flag === 0 ? value : null;
+    },
+    async observation(station, distanceKm, ms) {
+      // 観測がブロック先頭に留まる時間帯（毎時0〜十数分）は当該ブロックがまだ無い。前へ戻す。
+      for (const offset of [0, -3 * 3600000]) {
+        const res = await fetch(Amedas.blockURL(station.id, ms + offset));
+        if (!res.ok) continue;
+        const raw = await res.json();
+        const keys = Object.keys(raw).sort();
+        if (!keys.length) continue;
+        const latest = keys[keys.length - 1];
+        const e = raw[latest];
+        const y = +latest.slice(0, 4), mo = +latest.slice(4, 6), da = +latest.slice(6, 8);
+        const hh = +latest.slice(8, 10), mi = +latest.slice(10, 12);
+        const observedAt = Date.UTC(y, mo - 1, da, hh, mi) - JST_OFFSET;
+        return {
+          station, distanceKm, observedAt,
+          temperature: Amedas.qcValue(e, "temp"),
+          humidity: Amedas.qcValue(e, "humidity"),
+          precipitation10m: Amedas.qcValue(e, "precipitation10m"),
+          precipitation1h: Amedas.qcValue(e, "precipitation1h"),
+          sunshine1h: Amedas.qcValue(e, "sun1h"),
+          wind: Amedas.qcValue(e, "wind"),
+          supplementedFrom: {},
+        };
+      }
+      return null;
+    },
+    // 要素ごとに、その要素を観測している最寄り点を採る。
+    // 観測要素は地点により揃っておらず、単一地点固定だと「最寄りが雨量計だけ」が実際に起きる
+    // （大江山の最寄り・坂浦 4km がそうだった）。補完元は距離と標高差を添えて明示する。
+    maxSupplementKm: 50,
+    merge(primary, candidates, targetElevation) {
+      const merged = { ...primary, supplementedFrom: {} };
+      const fields = [
+        ["temperature", "気温"], ["humidity", "湿度"], ["precipitation1h", "降水"],
+        ["sunshine1h", "日照"], ["wind", "風"],
+      ];
+      for (const c of candidates) {
+        if (c.station.id === primary.station.id) continue;
+        if (c.distanceKm > Amedas.maxSupplementKm) continue;
+        let label = `${c.station.name} ${Math.round(c.distanceKm)}km`;
+        if (targetElevation !== null && targetElevation !== undefined) {
+          const diff = c.station.elevation - targetElevation;
+          if (Math.abs(diff) >= 200) label += `・標高差${diff > 0 ? "+" : ""}${Math.round(diff)}m`;
+        }
+        for (const [key, jp] of fields) {
+          if (merged[key] === null && c[key] !== null) {
+            merged[key] = c[key];
+            merged.supplementedFrom[jp] = label;
+          }
+        }
+        if (merged.precipitation10m === null && c.precipitation10m !== null) merged.precipitation10m = c.precipitation10m;
+      }
+      return merged;
+    },
+    supplementSummary(obs) {
+      const order = ["気温", "湿度", "降水", "日照", "風"];
+      const groups = {};
+      for (const [k, v] of Object.entries(obs.supplementedFrom)) (groups[v] = groups[v] || []).push(k);
+      return Object.entries(groups)
+        .map(([source, keys]) => `${keys.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join("・")} は ${source}`)
+        .sort();
+    },
+    condition(obs, isDaytime) {
+      const rain = obs.precipitation10m ?? obs.precipitation1h;
+      if (rain !== null && rain > 0) {
+        if (obs.temperature !== null && obs.temperature <= 1.0) return "雪";
+        const r = obs.precipitation1h ?? rain;
+        if (r < 1) return "弱い雨"; if (r < 10) return "雨"; if (r < 20) return "やや強い雨";
+        if (r < 30) return "強い雨"; if (r < 50) return "激しい雨"; if (r < 80) return "非常に激しい雨";
+        return "猛烈な雨";
+      }
+      if (!isDaytime) return "降水なし";
+      if (obs.sunshine1h === null) return "降水なし";
+      return obs.sunshine1h > 0 ? "晴れ" : "くもり";
+    },
+    async nearest(lat, lon, stations, observedAt, targetElevation, maxProbes = 6) {
+      const ordered = stations
+        .map((s) => ({ s, d: Geo.distanceKm(lat, lon, s.latitude, s.longitude) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, maxProbes);
+      const collected = [];
+      const hasCore = () => collected.some((o) => o.temperature !== null)
+        && collected.some((o) => o.precipitation1h !== null)
+        && collected.some((o) => o.humidity !== null);
+      for (const { s, d } of ordered) {
+        try {
+          const obs = await Amedas.observation(s, d, observedAt);
+          if (obs) collected.push(obs);
+        } catch (e) { /* 個別地点の失敗は飛ばす */ }
+        if (hasCore()) break;
+      }
+      const primary = collected.find((o) => o.temperature !== null || o.precipitation1h !== null) || collected[0];
+      if (!primary) throw new Error("近傍に観測値のある地点がありませんでした");
+      return Amedas.merge(primary, collected, targetElevation);
+    },
+  };
+
+  // 予報と実況の突き合わせ。8/22 に Pi 5 が豪雨の最中に「晴れ」と表示した構図を再発させない。
+  const Nowcast = {
+    rainThresholdMm: 0.5, temperatureToleranceC: 5,
+    compare(obs, home) {
+      const median = (v) => {
+        const values = Object.values(home.byModel)
+          .filter((s) => s.isSupported(v))
+          .map((s) => s.valueAt(v, obs.observedAt))
+          .filter((x) => x !== null);
+        return Curve.median(values);
+      };
+      const out = [];
+      const forecastRain = median("precipitation");
+      const observedRain = obs.precipitation1h ?? obs.precipitation10m;
+      if (observedRain !== null && forecastRain !== null) {
+        if (observedRain >= Nowcast.rainThresholdMm && forecastRain < 0.1) {
+          out.push({ severe: observedRain >= 1.0,
+            message: `予報は降水なしですが、実況で ${f1(observedRain)}mm/h を観測しています` });
+        } else if (forecastRain >= 1.0 && observedRain === 0) {
+          out.push({ severe: forecastRain >= 2.0,
+            message: `予報は降水 ${f1(forecastRain)}mm ですが、実況では降っていません` });
+        }
+      }
+      const ot = obs.temperature, ft = median("temperature_2m");
+      // 気温が標高差の大きい別地点から補完されている場合は比較しない。
+      // 山上の予報と谷底の観測を比べると、気温減率ぶんが「予報のずれ」に見えてしまう
+      // （大江山で実際に誤検知した。標高差-814m ≒ 気温差5℃は物理として正しい）。
+      const tempSupplement = obs.supplementedFrom["気温"] || "";
+      const elevationMismatch = tempSupplement.includes("標高差");
+      if (!elevationMismatch && ot !== null && ft !== null && Math.abs(ot - ft) >= Nowcast.temperatureToleranceC) {
+        out.push({ severe: Math.abs(ot - ft) >= 8,
+          message: `気温が実況 ${f1(ot)}℃ に対し予報 ${f1(ft)}℃ とずれています` });
+      }
+      return out;
+    },
+  };
+
+  const Sorami = {
+    Geo, JstCal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
+    HOME_VARS, OFFSET_VARS, CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
+    decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
+    rankOf, confidenceOf, Amedas, Nowcast, LightPollution,
+  };
+  global.Sorami = Sorami;
+  if (typeof module !== "undefined" && module.exports) module.exports = Sorami;
+})(typeof globalThis !== "undefined" ? globalThis : window);

@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>そらみ</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --card: #ffffff; --text: #1c1c1e; --secondary: #6e6e73; --tertiary: #aeaeb2;
+    --accent: #f08529; --line: rgba(0,0,0,.08);
+    --spectacular: #d93d4a; --good: #f08529; --fair: #c9a227; --poor: #8c8c8c;
+    --red: #d0342c; --orange: #d98a1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --secondary: #98989f; --tertiary: #636366;
+            --line: rgba(255,255,255,.1); --fair: #d4b247; }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+         background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5;
+         padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  main { max-width: 560px; margin: 0 auto; padding: 12px 14px 48px; }
+  h1 { font-size: 18px; text-align: center; padding: 6px 0 10px; }
+  .card { background: var(--card); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; }
+  .muted { color: var(--secondary); font-size: 12px; }
+  .tiny { color: var(--tertiary); font-size: 11px; }
+  button { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+  .place-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 4px 2px 10px; }
+  .place-row .pin { color: var(--accent); font-size: 20px; }
+  .place-row .name { font-size: 20px; font-weight: 700; }
+  .place-row .chev { margin-left: auto; color: var(--secondary); }
+
+  .scorebar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .scorebar > div { height: 100%; border-radius: 4px; }
+
+  .highlight { border: 1px solid; }
+  .highlight .big { font-size: 38px; font-weight: 800; line-height: 1; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+
+  .row { display: flex; align-items: center; gap: 10px; padding: 12px 2px; width: 100%; text-align: left;
+         border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: none; }
+  .row .icon { width: 26px; text-align: center; font-size: 17px; flex: none; }
+  .row .body { flex: 1; min-width: 0; }
+  .row .score { font-size: 19px; font-weight: 700; text-align: right; }
+
+  details.detail { border-top: 1px solid var(--line); }
+  details.detail > summary { list-style: none; }
+  details.detail > summary::-webkit-details-marker { display: none; }
+  .factors .f { padding: 6px 0; }
+  .factors .fh { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .factors .bar { position: relative; height: 6px; margin: 3px 0 2px; }
+  .factors .bar .mid { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: var(--line); }
+  .factors .bar .fill { position: absolute; top: 0; height: 6px; border-radius: 3px; }
+  .pm { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
+  .pm .n { width: 74px; flex: none; color: var(--secondary); }
+  .pm .v { width: 26px; text-align: right; color: var(--secondary); }
+  .pm .scorebar { flex: 1; height: 5px; }
+
+  .wk { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; width: 100%; text-align: left; }
+  .wk .d { width: 62px; flex: none; }
+  .wk .t { width: 40px; flex: none; color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .wk .scorebar { flex: 1; }
+  .wk .s { width: 26px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .wk.sel { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 7px; }
+
+  table.numbers { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.numbers th, table.numbers td { padding: 4px 7px; text-align: right; color: var(--secondary); }
+  table.numbers th { font-weight: 500; color: var(--tertiary); }
+  table.numbers td:first-child, table.numbers th:first-child { text-align: left; color: var(--text); }
+  .scrollx { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  .outcome { display: flex; gap: 8px; }
+  .outcome button { flex: 1; text-align: center; font-size: 13px; font-weight: 500; padding: 9px 0;
+                    border-radius: 9px; background: var(--line); }
+  .outcome button.on { background: var(--accent); color: #fff; }
+
+  dialog { border: none; border-radius: 16px; background: var(--card); color: var(--text);
+           width: min(92vw, 480px); max-height: 82vh; padding: 0; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
+  .sheet-body { overflow-y: auto; max-height: calc(82vh - 54px); padding: 0 16px 16px; }
+  .sheet input[type=search] { width: 100%; font: inherit; padding: 9px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; }
+  .chips button { flex: none; font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 999px; background: var(--line); }
+  .chips button.on { background: var(--accent); color: #fff; }
+  .list-item { display: block; width: 100%; text-align: left; padding: 9px 2px; border-top: 1px solid var(--line); }
+  .warn { color: var(--red); font-size: 12px; }
+  .notice { color: var(--orange); font-size: 12px; }
+  .section-h { display: flex; align-items: baseline; justify-content: space-between; margin: 4px 0 6px; }
+  .section-h h2 { font-size: 15px; }
+  .bins .bin { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+  .bins .lb { width: 48px; flex: none; color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .bins .bar { flex: 1; position: relative; height: 10px; border-radius: 5px; background: var(--line); }
+  .bins .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+  .bins .bar .mark { position: absolute; top: -2px; bottom: -2px; width: 2px; background: color-mix(in srgb, var(--text) 40%, transparent); }
+  .bins .pv { width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>そらみ</h1>
+  <button class="place-row card" id="placeButton">
+    <span class="pin">📍</span>
+    <span>
+      <span class="name" id="placeName">…</span>
+      <div class="muted" id="placeSub"></div>
+    </span>
+    <span class="chev">▾</span>
+  </button>
+
+  <div class="card" id="nowcast" hidden></div>
+  <div id="status" class="card muted" hidden></div>
+  <button class="card highlight" id="highlight" hidden style="width:100%;text-align:left"></button>
+  <div class="card" id="list"></div>
+
+  <div class="card">
+    <div class="section-h"><h2>記録</h2><span class="muted" id="recCount"></span></div>
+    <div class="bins" id="bins"></div>
+    <p class="tiny" style="margin-top:6px">横棒が実際に見えた割合、縦線がスコアの主張する水準。標本が無い帯は「—」。</p>
+    <div id="recList"></div>
+  </div>
+
+  <p class="tiny" id="footer"></p>
+</main>
+
+<dialog class="sheet" id="placeSheet">
+  <div class="sheet-head"><strong>地点</strong><button id="placeClose">閉じる</button></div>
+  <div class="sheet-body">
+    <input type="search" id="searchBox" placeholder="住所・地名・駅名（Enterで検索）">
+    <div id="searchResults"></div>
+    <button class="list-item" id="geoButton">📡 現在地を使う</button>
+    <div id="geoStatus" class="warn"></div>
+    <div class="section-h" style="margin-top:10px"><h2>お気に入り</h2></div>
+    <div id="favList" class="muted">よく使う地点を ☆ で登録するとここに出ます</div>
+    <div class="section-h" style="margin-top:10px"><h2>絶景スポット</h2></div>
+    <div class="chips" id="spotChips"></div>
+    <div id="spotList"></div>
+  </div>
+</dialog>
+
+<script src="spots.js"></script>
+<script src="sorami-core.js"></script>
+<script>
+"use strict";
+const S = window.Sorami;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const RANK_COLOR = { spectacular: "var(--spectacular)", good: "var(--good)", fair: "var(--fair)", poor: "var(--poor)" };
+const CONF_ICON = { high: "◎", medium: "△", low: "⚠︎" };
+
+// ---------------------------------------------------------------- 永続化（localStorage）
+const store = {
+  get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
+};
+let place = store.get("sorami.place",
+  { id: "default", name: "東京", subtitle: "東京都", latitude: 35.6812, longitude: 139.7671, terrain: null, elevation: null });
+let favorites = store.get("sorami.favorites", []);
+let sightings = store.get("sorami.sightings", []);
+
+let bundle = null;       // 取得済みの予報
+let weeks = {};          // phenomenon → [{dayMs, evaluation}]
+let selectedDay = {};    // phenomenon → dayMs
+
+// ---------------------------------------------------------------- 読み込み
+async function load(force) {
+  $("status").hidden = false;
+  $("status").textContent = "4つの気象モデルから取得しています…";
+  $("highlight").hidden = true;
+  try {
+    // 光害はその地点の素質なので予報と並行に取得する。取れなくても致命的ではない。
+    const [fetched, lp] = await Promise.all([
+      S.fetchForecast(place.latitude, place.longitude),
+      S.LightPollution.lookup(place.latitude, place.longitude).catch(() => null),
+    ]);
+    bundle = fetched;
+    place.lightPollution = lp;
+    weeks = {};
+    for (const id of Object.keys(S.SCORERS)) {
+      weeks[id] = S.evaluateWeek(id, bundle, place);
+    }
+    $("status").hidden = true;
+    render();
+    loadNowcast().catch(() => { $("nowcast").hidden = true; });  // 実況は補助。失敗しても予報は出す
+  } catch (e) {
+    $("status").hidden = false;
+    $("status").innerHTML = `<span class="warn">予報を取得できませんでした（${esc(e.message)}）</span> <button id="retry" style="color:var(--accent)">再試行</button>`;
+    $("retry").onclick = () => load(true);
+  }
+}
+
+// アメダス実況。更新は10分間隔なのでそれより短く取りに行かない。
+let amedasStations = null;
+async function loadNowcast() {
+  const latest = await S.Amedas.latestTime();
+  if (!amedasStations) amedasStations = await S.Amedas.stations();
+  const obs = await S.Amedas.nearest(place.latitude, place.longitude, amedasStations, latest,
+    place.elevation ?? bundle?.home.grid.elevation);
+  const daytime = S.Sun.position(obs.observedAt, place.latitude, place.longitude).elevation > 0;
+  const disagreements = bundle ? S.Nowcast.compare(obs, bundle.home) : [];
+  const parts = [S.Amedas.condition(obs, daytime)];
+  if (obs.temperature !== null) parts.push(`${obs.temperature.toFixed(1)}℃`);
+  if (obs.humidity !== null) parts.push(`湿度${Math.round(obs.humidity)}%`);
+  let html = `<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+    <span class="muted">実況 ${S.JstCal.hhmm(obs.observedAt)}</span>
+    <strong>${esc(parts.join(" "))}</strong>
+    <span class="tiny" style="margin-left:auto">${esc(obs.station.name)} ${Math.round(obs.distanceKm)}km</span></div>`;
+  for (const line of S.Amedas.supplementSummary(obs)) html += `<div class="tiny">${esc(line)}</div>`;
+  for (const d of disagreements) html += `<div class="${d.severe ? "warn" : "notice"}">⚠ ${esc(d.message)}</div>`;
+  $("nowcast").innerHTML = html;
+  $("nowcast").hidden = false;
+}
+
+// ---------------------------------------------------------------- 描画
+function upcoming(entries, now) {
+  return entries.find((e) => !e.evaluation.unavailable && e.evaluation.window[1] > now)
+      || entries.find((e) => !e.evaluation.unavailable) || entries[0];
+}
+
+function render() {
+  const now = Date.now();
+  $("placeName").textContent = place.name;
+  const subParts = [];
+  if (place.subtitle) subParts.push(place.subtitle);
+  const elev = place.elevation ?? bundle?.home.grid.elevation;
+  if (elev !== null && elev !== undefined) subParts.push(`標高 ${Math.round(elev)}m`);
+  $("placeSub").textContent = subParts.join(" ・ ");
+
+  // 次の見どころ: 36時間以内・評価済み・未来の回のうち最高スコア
+  let best = null;
+  for (const [id, entries] of Object.entries(weeks)) {
+    const u = upcoming(entries, now);
+    if (!u || u.evaluation.unavailable) continue;
+    if (u.evaluation.window[1] <= now || u.evaluation.peak > now + 36 * 3600000) continue;
+    if (!best || u.evaluation.score > best.u.evaluation.score) best = { id, u };
+  }
+  if (best) {
+    const ev = best.u.evaluation, color = RANK_COLOR[ev.rank.key];
+    $("highlight").hidden = false;
+    $("highlight").style.borderColor = color;
+    $("highlight").innerHTML = `
+      <div class="muted" style="margin-bottom:6px">次の見どころ</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:30px">${S.PHENOMENA[best.id].icon}</span>
+        <span style="flex:1"><strong style="font-size:19px">${S.PHENOMENA[best.id].name}</strong>
+          <div class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)} ${S.JstCal.hhmmRounded(ev.peak)}</div></span>
+        <span style="text-align:right"><div class="big" style="color:${color}">${Math.round(ev.score)}</div>
+          <span class="badge" style="color:${color};background:color-mix(in srgb,${color} 14%,transparent)">${ev.rank.label}</span></span>
+      </div>
+      <div class="scorebar" style="margin:10px 0 6px"><div style="width:${ev.score}%;background:${color}"></div></div>
+      <div class="tiny">${CONF_ICON[ev.confidence.key]} 信頼度${ev.confidence.label} ${Math.round(ev.spread[0])}–${Math.round(ev.spread[1])} ・ ${ev.confidence.caption}</div>`;
+    $("highlight").onclick = () => {
+      const el = document.querySelector(`details[data-id="${best.id}"]`);
+      if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth" }); }
+    };
+  } else $("highlight").hidden = true;
+
+  // 一覧: 評価できるものが先、直近に起きる順
+  const order = Object.keys(weeks).sort((a, b) => {
+    const ua = upcoming(weeks[a], now), ub = upcoming(weeks[b], now);
+    const aOk = ua && !ua.evaluation.unavailable, bOk = ub && !ub.evaluation.unavailable;
+    if (aOk !== bOk) return aOk ? -1 : 1;
+    const pa = aOk ? ua.evaluation.peak : Infinity, pb = bOk ? ub.evaluation.peak : Infinity;
+    if (pa !== pb) return pa - pb;
+    return S.PHENOMENA[a].order - S.PHENOMENA[b].order;
+  });
+  $("list").innerHTML = order.map((id) => renderPhenomenon(id, now)).join("");
+  for (const el of $("list").querySelectorAll("[data-day]")) {
+    el.onclick = () => { selectedDay[el.closest("details").dataset.id] = +el.dataset.day; render(); reopen(el.closest("details").dataset.id); };
+  }
+  for (const el of $("list").querySelectorAll("[data-outcome]")) {
+    el.onclick = () => recordOutcome(el.dataset.pid, +el.dataset.peak, el.dataset.outcome);
+  }
+  renderRecords();
+  $("footer").innerHTML =
+    `取得 ${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} ・ 4モデル（気象庁MSM / ICON / ECMWF / GFS）の中央値。`
+    + `夕焼けは日の入り方位 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° 側の雲もあわせて見ています。<br>`
+    + `これは予報であって観測ではありません。当日の空とは異なることがあります。<br>`
+    + `予報: Open-Meteo ／ 実況: 気象庁アメダス ／ 光害: <a href="https://djlorenz.github.io/astronomy/lp/">Lorenz Light Pollution Atlas 2025</a>（VIIRS） ／ 検索: OSM Nominatim ・ 国土地理院`;
+}
+
+function reopen(id) {
+  const el = document.querySelector(`details[data-id="${id}"]`);
+  if (el) el.open = true;
+}
+
+function renderPhenomenon(id, now) {
+  const entries = weeks[id];
+  const u = upcoming(entries, now);
+  const meta = S.PHENOMENA[id];
+  if (!u) return "";
+  const sel = entries.find((e) => e.dayMs === selectedDay[id]) || u;
+  const ev = sel.evaluation;
+  const head = ev.unavailable
+    ? `<div class="body"><strong>${meta.name}</strong><div class="muted">${esc(ev.unavailable.message)}</div></div>`
+    : `<div class="body"><strong>${meta.name}</strong>
+         <span class="muted">${S.JstCal.relativeDay(sel.dayMs, now)} ${S.JstCal.hhmmRounded(ev.peak)}</span>
+         <div class="scorebar" style="max-width:150px;margin-top:5px"><div style="width:${ev.score}%;background:${RANK_COLOR[ev.rank.key]}"></div></div>
+       </div>
+       <span class="score" style="color:${RANK_COLOR[ev.rank.key]}">${Math.round(ev.score)}
+         <div class="badge" style="font-size:11px;color:${RANK_COLOR[ev.rank.key]};background:color-mix(in srgb,${RANK_COLOR[ev.rank.key]} 14%,transparent)">${ev.rank.label}</div></span>`;
+  return `<details class="detail" data-id="${id}" ${selectedDay[id] ? "open" : ""}>
+    <summary class="row"><span class="icon">${meta.icon}</span>${head}<span class="chev muted">▸</span></summary>
+    ${ev.unavailable ? "" : renderDetail(id, sel, now)}
+    ${renderWeek(id, entries, sel, now)}
+    ${renderTable(id, entries)}
+    <p class="tiny" style="padding:6px 0 10px">📖 ${esc(ev.source)}</p>
+  </details>`;
+}
+
+function renderDetail(id, sel, now) {
+  const ev = sel.evaluation;
+  const maxAbs = Math.max(1, ...ev.factors.map((f) => Math.abs(f.c)));
+  const factors = ev.factors.map((f) => {
+    const pos = f.c >= 0, w = Math.min(50, 50 * Math.abs(f.c) / maxAbs);
+    return `<div class="f"><div class="fh"><span>${esc(f.label)}</span>
+      <strong style="color:${pos ? "var(--accent)" : "var(--red)"}">${f.c >= 0 ? "+" : ""}${f.c.toFixed(1)}</strong></div>
+      <div class="bar"><span class="mid"></span>
+        <span class="fill" style="${pos ? `left:50%` : `left:${50 - w}%`};width:${w}%;background:${pos ? "var(--accent)" : "var(--red)"};opacity:.75"></span></div>
+      ${f.detail ? `<div class="tiny">${esc(f.detail)}</div>` : ""}</div>`;
+  }).join("");
+  const perModel = S.MODELS.filter((m) => ev.perModel[m] !== undefined).map((m) => {
+    const v = ev.perModel[m], color = RANK_COLOR[S.rankOf(v).key];
+    return `<div class="pm"><span class="n">${S.MODEL_NAMES[m]}</span>
+      <span class="scorebar"><div style="width:${v}%;background:${color}"></div></span>
+      <span class="v">${Math.round(v)}</span></div>`;
+  }).join("");
+  // 記録できるのはその回が終わってから。まだ来ていない空は評価できない。
+  const finished = ev.window[1] <= now;
+  const current = findSighting(id, ev.peak);
+  const outcomes = [["seen", "見えた"], ["missed", "見えなかった"], ["unchecked", "確認せず"]];
+  const record = finished
+    ? `<div style="padding:8px 0"><div class="muted" style="margin-bottom:6px">実際どうだった？</div>
+       <div class="outcome">${outcomes.map(([k, l]) =>
+         `<button data-outcome="${k}" data-pid="${id}" data-peak="${ev.peak}" class="${current?.outcome === k ? "on" : ""}">${l}</button>`).join("")}</div></div>`
+    : `<p class="tiny" style="padding:4px 0">${S.JstCal.hhmmRounded(ev.peak)} を過ぎたら「見えたか」を記録できます</p>`;
+  return `<div style="padding:4px 0 6px">
+    <div class="tiny" style="margin-bottom:4px">${CONF_ICON[ev.confidence.key]} 信頼度${ev.confidence.label}（${Math.round(ev.spread[0])}–${Math.round(ev.spread[1])}）・ ${ev.confidence.caption}</div>
+    <div class="section-h"><h2>なぜこのスコアか</h2><span class="tiny">基準 ${Math.round(ev.base)} → ${Math.round(ev.score)}</span></div>
+    <div class="factors">${factors}</div>
+    <div class="section-h" style="margin-top:8px"><h2>モデル別</h2></div>${perModel}
+    ${record}
+  </div>`;
+}
+
+function renderWeek(id, entries, sel, now) {
+  return `<div style="padding:2px 0 6px"><div class="section-h"><h2>週間</h2></div>` + entries.map((e) => {
+    const ev = e.evaluation;
+    if (ev.unavailable) {
+      return `<div class="wk"><span class="d">${S.JstCal.relativeDay(e.dayMs, now)}</span>
+        <span class="tiny" style="flex:1">${esc(ev.unavailable.message)}</span></div>`;
+    }
+    const color = RANK_COLOR[ev.rank.key];
+    return `<button class="wk ${e.dayMs === sel.dayMs ? "sel" : ""}" data-day="${e.dayMs}">
+      <span class="d">${S.JstCal.relativeDay(e.dayMs, now)}</span>
+      <span class="t">${S.JstCal.hhmmRounded(ev.peak)}</span>
+      <span class="scorebar"><div style="width:${ev.score}%;background:${color}"></div></span>
+      <span class="s" style="color:${color}">${Math.round(ev.score)}</span>
+      <span class="tiny">${CONF_ICON[ev.confidence.key]}</span></button>`;
+  }).join("") + `</div>`;
+}
+
+function renderTable(id, entries) {
+  if (!bundle) return "";
+  const hasSunward = id === "sunset" || id === "sunrise";
+  const fmt = (v, unit, dec = 0) => (v === null || v === undefined) ? "—"
+    : dec ? v.toFixed(dec) + unit : Math.round(v) + unit;
+  const rows = entries.filter((e) => !e.evaluation.unavailable).map((e) => {
+    const r = S.readingAt(bundle, id, e.evaluation.peak);
+    return `<tr><td>${S.JstCal.relativeDay(e.dayMs, Date.now())}</td>
+      <td style="color:${RANK_COLOR[e.evaluation.rank.key]};font-weight:600">${Math.round(e.evaluation.score)}</td>
+      <td>${fmt(r.cloudLow, "%")}</td><td>${fmt(r.cloudMid, "%")}</td><td>${fmt(r.cloudHigh, "%")}</td>
+      ${hasSunward ? `<td>${fmt(r.sunwardLow, "%")}</td><td>${fmt(r.sunwardMid, "%")}</td><td>${fmt(r.sunwardHigh, "%")}</td>` : ""}
+      <td>${fmt(r.precipitation, "", 1)}</td><td>${fmt(r.humidity, "%")}</td>
+      <td>${fmt(r.temperature, "℃", 1)}</td>
+      <td>${r.visibility === null || r.visibility === undefined ? "—" : Math.round(r.visibility / 1000) + "km"}</td></tr>`;
+  }).join("");
+  if (!rows) return "";
+  return `<details style="padding:4px 0"><summary class="muted" style="cursor:pointer">詳しい数値</summary>
+    <div class="scrollx"><table class="numbers">
+    <tr><th></th><th>点</th><th>低層</th><th>中層</th><th>高層</th>
+    ${hasSunward ? "<th>陽低</th><th>陽中</th><th>陽高</th>" : ""}
+    <th>降水</th><th>湿度</th><th>気温</th><th>視程</th></tr>${rows}</table></div>
+    <p class="tiny">モデル横断の中央値。「陽側」は太陽方位へ低層165km・中層260km・高層368km離れた地点の雲量。</p></details>`;
+}
+
+// ---------------------------------------------------------------- 記録・校正
+function findSighting(pid, peak) {
+  return sightings.find((s) => s.phenomenon === pid && s.placeName === place.name && S.JstCal.sameDay(s.peak, peak));
+}
+function recordOutcome(pid, peak, outcome) {
+  const entries = weeks[pid] || [];
+  const entry = entries.find((e) => Math.abs(e.evaluation.peak - peak) < 60000);
+  if (!entry) return;
+  const ev = entry.evaluation;
+  const existing = findSighting(pid, peak);
+  const record = {
+    id: existing?.id || crypto.randomUUID(),
+    recordedAt: Date.now(), phenomenon: pid, placeName: place.name,
+    latitude: place.latitude, longitude: place.longitude,
+    peak, score: ev.score, rank: ev.rank.key, confidence: ev.confidence.key,
+    perModel: ev.perModel, factors: ev.factors, outcome,
+    observations: collectObservations(pid, peak),
+  };
+  if (existing) sightings = sightings.map((s) => (s.id === existing.id ? record : s));
+  else sightings.push(record);
+  store.set("sorami.sightings", sightings);
+  render(); reopen(pid);
+}
+// 生の気象値を残す。閾値を変えたときに過去の記録を再採点できなければ校正のデータにならない。
+function collectObservations(pid, peak) {
+  if (!bundle) return {};
+  const out = {};
+  for (const [m, series] of Object.entries(bundle.home.byModel)) {
+    for (const v of S.HOME_VARS) {
+      if (!series.isSupported(v)) continue;
+      const value = series.valueAt(v, peak);
+      if (value !== null) out[`${v}@${m}`] = value;
+    }
+  }
+  const offsets = pid === "sunrise" ? bundle.sunriseOffsets : bundle.sunsetOffsets;
+  if (offsets) {
+    for (const layer of S.CLOUD_LAYERS) {
+      const loc = offsets[layer.key];
+      if (!loc) continue;
+      for (const [m, series] of Object.entries(loc.byModel)) {
+        const value = series.valueAt(layer.variable, peak);
+        if (value !== null) out[`${layer.variable}@${m}#sunward-${layer.key}`] = value;
+      }
+    }
+  }
+  out._grid_elevation = bundle.home.grid.elevation;
+  return out;
+}
+function renderRecords() {
+  const conclusive = sightings.filter((s) => s.outcome !== "unchecked");
+  $("recCount").textContent = `確定 ${conclusive.length}件`;
+  let bins = "";
+  for (let lo = 0; lo < 100; lo += 20) {
+    const hi = lo + 20;
+    const inBin = conclusive.filter((s) => s.score >= lo && (s.score < hi || hi === 100));
+    const seen = inBin.filter((s) => s.outcome === "seen").length;
+    // 標本ゼロの帯は 0% ではなく「—」。データが無いことと外れたことを区別する。
+    const rate = inBin.length ? seen / inBin.length : null;
+    const predicted = (lo + hi) / 2;
+    bins += `<div class="bin"><span class="lb">${lo}–${hi}</span>
+      <span class="bar">${rate !== null ? `<span class="fill" style="width:${rate * 100}%;background:${RANK_COLOR[S.rankOf(predicted).key]}"></span>` : ""}
+        <span class="mark" style="left:${predicted}%"></span></span>
+      <span class="pv">${rate !== null ? Math.round(rate * 100) + "%" : "—"}</span>
+      <span class="tiny" style="width:20px;text-align:right">${inBin.length}</span></div>`;
+  }
+  $("bins").innerHTML = bins;
+  const OUTCOME_LABEL = { seen: "見えた", missed: "見えなかった", unchecked: "確認せず" };
+  $("recList").innerHTML = [...sightings].sort((a, b) => b.peak - a.peak).slice(0, 30).map((s) => `
+    <div class="list-item" style="display:flex;gap:8px;align-items:center">
+      <span>${S.PHENOMENA[s.phenomenon].icon}</span>
+      <span style="flex:1"><strong style="font-size:13px">${S.JstCal.monthDay(s.peak)} ${esc(s.placeName)}</strong>
+        <div class="tiny">${S.PHENOMENA[s.phenomenon].name} ・ ${Math.round(s.score)}点</div></span>
+      <span class="badge" style="background:var(--line)">${OUTCOME_LABEL[s.outcome]}</span></div>`).join("")
+    || `<p class="tiny" style="padding:8px 0">現象を開いて「実際どうだった？」を押すと貯まります。</p>`;
+}
+
+// ---------------------------------------------------------------- 地点
+function selectPlace(p) {
+  place = p;
+  store.set("sorami.place", p);
+  $("placeSheet").close();
+  selectedDay = {};
+  load(true);
+}
+function renderSheet() {
+  $("favList").innerHTML = favorites.length
+    ? favorites.map((f, i) => `<div style="display:flex;align-items:center">
+        <button class="list-item" style="flex:1" data-fav="${i}"><strong>${esc(f.name)}</strong>
+          <div class="tiny">${esc(f.subtitle || "")}</div></button>
+        <button data-unfav="${i}" style="padding:8px;color:var(--tertiary)">✕</button></div>`).join("")
+    : `<span class="tiny">よく使う地点は選択後、地点名の横の ☆ で登録できます</span>`;
+  for (const el of $("favList").querySelectorAll("[data-fav]")) el.onclick = () => selectPlace(favorites[+el.dataset.fav]);
+  for (const el of $("favList").querySelectorAll("[data-unfav]")) el.onclick = () => {
+    favorites.splice(+el.dataset.unfav, 1); store.set("sorami.favorites", favorites); renderSheet();
+  };
+
+  const filter = window._spotFilter || null;
+  const phenomenaWithSpots = [...new Set(SORAMI_SPOTS.spots.flatMap((s) => s.phenomena))];
+  $("spotChips").innerHTML = `<button class="${!filter ? "on" : ""}" data-chip="">すべて</button>`
+    + phenomenaWithSpots.map((p) => `<button class="${filter === p ? "on" : ""}" data-chip="${p}">${S.PHENOMENA[p].name}</button>`).join("");
+  for (const el of $("spotChips").querySelectorAll("[data-chip]")) {
+    el.onclick = () => { window._spotFilter = el.dataset.chip || null; renderSheet(); };
+  }
+  const spots = filter ? SORAMI_SPOTS.spots.filter((s) => s.phenomena.includes(filter)) : SORAMI_SPOTS.spots;
+  $("spotList").innerHTML = spots.map((s, i) => `<button class="list-item" data-spot="${s.id}">
+      <strong>${esc(s.name)}</strong> <span class="tiny">${s.phenomena.map((p) => S.PHENOMENA[p].icon).join("")}</span>
+      <div class="tiny">${esc(s.prefecture)} ・ 標高${Math.round(s.elevation)}m ー ${esc(s.note)}</div></button>`).join("");
+  for (const el of $("spotList").querySelectorAll("[data-spot]")) {
+    el.onclick = () => {
+      const s = SORAMI_SPOTS.spots.find((x) => x.id === el.dataset.spot);
+      selectPlace({ id: "spot:" + s.id, name: s.name, subtitle: s.prefecture,
+        latitude: s.latitude, longitude: s.longitude, terrain: s.terrain, elevation: s.elevation });
+    };
+  }
+}
+$("placeButton").onclick = () => { renderSheet(); $("placeSheet").showModal(); };
+$("placeClose").onclick = () => $("placeSheet").close();
+$("geoButton").onclick = () => {
+  $("geoStatus").textContent = "";
+  navigator.geolocation.getCurrentPosition(
+    (pos) => selectPlace({ id: "current", name: "現在地", subtitle: "",
+      latitude: pos.coords.latitude, longitude: pos.coords.longitude, terrain: null, elevation: null }),
+    () => { $("geoStatus").textContent = "現在地を取得できませんでした（HTTPS でのみ利用できます）"; },
+    { timeout: 10000 });
+};
+$("searchBox").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  const q = $("searchBox").value.trim();
+  if (!q) return;
+  $("searchResults").innerHTML = `<p class="tiny">検索中…</p>`;
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams(
+      { q, format: "jsonv2", limit: "6", countrycodes: "jp", "accept-language": "ja" });
+    const results = await (await fetch(url)).json();
+    $("searchResults").innerHTML = results.length
+      ? results.map((r, i) => `<button class="list-item" data-sr="${i}"><strong>${esc(r.name || r.display_name.split(",")[0])}</strong>
+          <div class="tiny">${esc(r.display_name)}</div></button>`).join("")
+      : `<p class="tiny">該当なし</p>`;
+    for (const el of $("searchResults").querySelectorAll("[data-sr]")) {
+      el.onclick = () => {
+        const r = results[+el.dataset.sr];
+        selectPlace({ id: `search:${r.lat},${r.lon}`, name: r.name || r.display_name.split(",")[0],
+          subtitle: r.display_name.split(",").slice(1, 3).join("").trim(),
+          latitude: +r.lat, longitude: +r.lon, terrain: null, elevation: null });
+      };
+    }
+  } catch { $("searchResults").innerHTML = `<p class="warn">検索に失敗しました</p>`; }
+});
+
+// 選択中の地点をお気に入りへ（地点名タップ長押し代わりに ☆ を出す）
+$("placeName").insertAdjacentHTML("afterend",
+  ` <button id="favToggle" style="font-size:16px;vertical-align:2px"></button>`);
+function renderFavToggle() {
+  const isFav = favorites.some((f) => f.id === place.id);
+  $("favToggle").textContent = isFav ? "★" : "☆";
+  $("favToggle").style.color = isFav ? "var(--accent)" : "var(--tertiary)";
+}
+$("favToggle").onclick = (e) => {
+  e.stopPropagation();
+  const i = favorites.findIndex((f) => f.id === place.id);
+  if (i >= 0) favorites.splice(i, 1); else favorites.push(place);
+  store.set("sorami.favorites", favorites);
+  renderFavToggle();
+};
+new MutationObserver(renderFavToggle).observe($("placeName"), { childList: true });
+
+load(false);
+</script>
+</body>
+</html>
