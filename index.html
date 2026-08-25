@@ -120,7 +120,11 @@
   <div class="card" id="list"></div>
 
   <div class="card">
-    <div class="section-h"><h2>記録</h2><span class="muted" id="recCount"></span></div>
+    <div class="section-h"><h2>記録</h2>
+      <span><span class="muted" id="recCount"></span>
+        <button id="exportBtn" class="muted" style="margin-left:8px">書き出し</button>
+        <button id="importBtn" class="muted" style="margin-left:6px">読み込み</button>
+        <input type="file" id="importFile" accept=".json" hidden></span></div>
     <div class="bins" id="bins"></div>
     <p class="tiny" style="margin-top:6px">横棒が実際に見えた割合、縦線がスコアの主張する水準。標本が無い帯は「—」。</p>
     <div id="recList"></div>
@@ -555,6 +559,38 @@ $("favToggle").onclick = (e) => {
   renderFavToggle();
 };
 new MutationObserver(renderFavToggle).observe($("placeName"), { childList: true });
+
+// 記録は localStorage にあり、ブラウザのデータ消去で消える。
+// 校正のために貯めるものなので、書き出して残せるようにしておく。
+$("exportBtn").onclick = () => {
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), sightings }, null, 1)],
+    { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `sorami-sightings-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const incoming = Array.isArray(data) ? data : data.sightings;
+    if (!Array.isArray(incoming)) throw new Error("形式が違います");
+    // 同じ id は上書き、無いものは追加。取り込みで既存の記録を失わせない。
+    const byId = new Map(sightings.map((s) => [s.id, s]));
+    for (const rec of incoming) if (rec && rec.id) byId.set(rec.id, rec);
+    sightings = [...byId.values()];
+    store.set("sorami.sightings", sightings);
+    renderRecords();
+    alert(`${incoming.length}件を読み込みました（合計 ${sightings.length}件）`);
+  } catch (err) {
+    alert("読み込めませんでした: " + err.message);
+  }
+  e.target.value = "";
+};
 
 load(false);
 </script>
