@@ -23,6 +23,23 @@
          background: var(--bg); color: var(--text); font-size: 0.94rem; line-height: 1.5;
          padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
   main { max-width: 560px; margin: 0 auto; padding: 12px 14px 48px; }
+
+  /* PC・タブレット横向き: 左に一覧、右に詳細の2ペイン。
+     ただ幅を広げると1行が長くなって読みにくいので、列を分けて使う。 */
+  @media (min-width: 900px) {
+    main { max-width: 1180px; }
+    /* 地点ヘッダーは全幅に伸ばすと間延びするので、左カラムと同じ幅に揃える */
+    .place-row { max-width: 360px; }
+    h1 { text-align: left; padding-left: 2px; }
+    .panes { display: grid; grid-template-columns: minmax(320px, 360px) 1fr;
+             gap: 16px; align-items: start; }
+    .pane-right { position: sticky; top: 12px; }
+    /* 記録は幅を使ったほうが読みやすいので下段に横断で置く */
+    #records { grid-column: 1 / -1; }
+    /* 広い側では数値表が収まるので横スクロールを出さない */
+    .pane-right .scrollx { overflow-x: visible; }
+    .pane-right table.numbers { width: 100%; }
+  }
   h1 { font-size: 1.13rem; text-align: center; padding: 6px 0 10px; }
   .card { background: var(--card); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; }
   .muted { color: var(--secondary); font-size: 0.75rem; }
@@ -44,6 +61,7 @@
   .row { display: flex; align-items: center; gap: 10px; padding: 12px 2px; width: 100%; text-align: left;
          border-top: 1px solid var(--line); }
   .row:first-of-type { border-top: none; }
+  .row.picked { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 10px; }
   .row .icon { width: 26px; text-align: center; font-size: 1.06rem; flex: none; }
   .row .body { flex: 1; min-width: 0; }
   .row .score { font-size: 1.19rem; font-weight: 700; text-align: right; }
@@ -53,6 +71,7 @@
   details.detail > summary::-webkit-details-marker { display: none; }
   .factors .f { padding: 6px 0; }
   .factors .fh { display: flex; justify-content: space-between; gap: 8px; font-size: 0.81rem; }
+  .factors .mark { display: inline-block; width: 1.2em; font-weight: 700; }
   .factors .bar { position: relative; height: 6px; margin: 3px 0 2px; }
   .factors .bar .mid { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: var(--line); }
   .factors .bar .fill { position: absolute; top: 0; height: 6px; border-radius: 3px; }
@@ -118,20 +137,25 @@
     <span class="chev">▾</span>
   </button>
 
+  <div class="panes">
+   <div class="pane-left">
   <div class="card" id="nowcast" hidden></div>
   <div id="status" class="card muted" hidden></div>
   <button class="card highlight" id="highlight" hidden style="width:100%;text-align:left"></button>
   <div class="card" id="list"></div>
+   </div>
+   <div class="pane-right" id="detailPane" hidden></div>
 
-  <div class="card">
+  <div class="card" id="records">
     <div class="section-h"><h2>記録</h2>
       <span><span class="muted" id="recCount"></span>
         <button id="exportBtn" class="muted" style="margin-left:8px">書き出し</button>
         <button id="importBtn" class="muted" style="margin-left:6px">読み込み</button>
         <input type="file" id="importFile" accept=".json" hidden></span></div>
     <div class="bins" id="bins"></div>
-    <p class="tiny" style="margin-top:6px">横棒が実際に見えた割合、縦線がスコアの主張する水準。標本が無い帯は「—」。</p>
+    <p class="tiny" style="margin-top:6px">横棒が実際に見えた割合、縦線が点数どおりならこうなるはずという水準です。棒が線より短ければ点数が甘く、長ければ辛いということ。記録が無い帯は「—」と出します。</p>
     <div id="recList"></div>
+  </div>
   </div>
 
   <p class="tiny" id="footer"></p>
@@ -152,14 +176,23 @@
   </div>
 </dialog>
 
-<script src="spots.js"></script>
-<script src="sorami-core.js"></script>
+<script src="spots.js?v=202608251631"></script>
+<script src="sorami-core.js?v=202608251631"></script>
 <script>
 "use strict";
 const S = window.Sorami;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const RANK_COLOR = { spectacular: "var(--spectacular)", good: "var(--good)", fair: "var(--fair)", poor: "var(--poor)" };
+
+// 「信頼度中 62–85」だけでは何のことか伝わらない。
+// 4つの予報モデルの見立てがどれだけ揃っているかを、そのまま言葉にする。
+function confidenceText(ev) {
+  const lo = Math.round(ev.spread[0]), hi = Math.round(ev.spread[1]);
+  if (ev.confidence.key === "high") return `4つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`;
+  if (ev.confidence.key === "medium") return `予報モデルによって ${lo}〜${hi}点 と幅があります`;
+  return `予報モデルの見立てが ${lo}〜${hi}点 と大きく割れています。外れることがあります`;
+}
 const CONF_ICON = { high: "◎", medium: "△", low: "⚠︎" };
 
 // ---------------------------------------------------------------- 永続化（localStorage）
@@ -171,6 +204,10 @@ let place = store.get("sorami.place",
   { id: "default", name: "東京", subtitle: "東京都", latitude: 35.6812, longitude: 139.7671, terrain: null, elevation: null });
 let favorites = store.get("sorami.favorites", []);
 let sightings = store.get("sorami.sightings", []);
+
+// 900px 以上は2ペイン。狭い側はこれまでどおりアコーディオン。
+const WIDE = window.matchMedia("(min-width: 900px)");
+let picked = null;       // 2ペインで右に出している現象
 
 let bundle = null;       // 取得済みの予報
 let weeks = {};          // phenomenon → [{dayMs, evaluation}]
@@ -259,10 +296,11 @@ function render() {
         <span style="flex:1"><strong style="font-size:1.19rem">${S.PHENOMENA[best.id].name}</strong>
           <div class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</div></span>
         <span style="text-align:right"><div class="big" style="color:${color}">${Math.round(ev.score)}</div>
-          <span class="badge" style="color:${color};background:color-mix(in srgb,${color} 14%,transparent)">${ev.rank.label}</span></span>
+          <span class="badge" style="color:${color};background:color-mix(in srgb,${color} 14%,transparent)">${S.phrasing(best.id, ev.rank).label}</span></span>
       </div>
-      <div class="scorebar" style="margin:10px 0 6px"><div style="width:${ev.score}%;background:${color}"></div></div>
-      <div class="tiny">${CONF_ICON[ev.confidence.key]} 信頼度${ev.confidence.label} ${Math.round(ev.spread[0])}–${Math.round(ev.spread[1])} ・ ${ev.confidence.caption}</div>`;
+      <div class="scorebar" style="margin:10px 0 8px"><div style="width:${ev.score}%;background:${color}"></div></div>
+      <div style="font-size:0.94rem;margin-bottom:4px">${esc(S.phrasing(best.id, ev.rank).say)}</div>
+      <div class="tiny">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div>`;
     $("highlight").onclick = () => {
       const el = document.querySelector(`details[data-id="${best.id}"]`);
       if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth" }); }
@@ -278,18 +316,44 @@ function render() {
     if (pa !== pb) return pa - pb;
     return S.PHENOMENA[a].order - S.PHENOMENA[b].order;
   });
-  $("list").innerHTML = order.map((id) => renderPhenomenon(id, now)).join("");
-  for (const el of $("list").querySelectorAll("[data-day]")) {
-    el.onclick = () => { selectedDay[el.closest("details").dataset.id] = +el.dataset.day; render(); reopen(el.closest("details").dataset.id); };
+  const wide = WIDE.matches;
+  $("detailPane").hidden = !wide;
+
+  if (wide) {
+    // 選択中の現象。未選択なら見どころ、それも無ければ評価できる最初のもの。
+    const evaluable = order.filter((id) => {
+      const u = upcoming(weeks[id], now);
+      return u && !u.evaluation.unavailable;
+    });
+    if (!picked || !weeks[picked]) picked = best ? best.id : (evaluable[0] || order[0]);
+    $("list").innerHTML = order.map((id) => renderPickRow(id, now)).join("");
+    $("detailPane").innerHTML = renderDetailPane(picked, now);
+    for (const el of $("list").querySelectorAll("[data-pick]")) {
+      el.onclick = () => { picked = el.dataset.pick; render(); };
+    }
+  } else {
+    $("list").innerHTML = order.map((id) => renderPhenomenon(id, now)).join("");
   }
-  for (const el of $("list").querySelectorAll("[data-outcome]")) {
+
+  const scope = wide ? document.querySelector("main") : $("list");
+  for (const el of scope.querySelectorAll("[data-day]")) {
+    el.onclick = () => {
+      const host = el.closest("details") || el.closest("[data-id]");
+      const id = host.dataset.id;
+      selectedDay[id] = +el.dataset.day;
+      render();
+      if (!WIDE.matches) reopen(id);
+    };
+  }
+  for (const el of scope.querySelectorAll("[data-outcome]")) {
     el.onclick = () => recordOutcome(el.dataset.pid, +el.dataset.peak, el.dataset.outcome);
   }
   renderRecords();
   $("footer").innerHTML =
-    `取得 ${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} ・ 4モデル（気象庁MSM / ICON / ECMWF / GFS）の中央値。`
-    + `夕焼けは日の入り方位 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° 側の雲もあわせて見ています。<br>`
-    + `これは予報であって観測ではありません。当日の空とは異なることがあります。<br>`
+    `${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} 時点の予報。`
+    + `気象庁MSM・ICON・ECMWF・GFS の4モデルの真ん中の値を採り、見立てのばらつきも一緒に出しています。<br>`
+    + `夕焼け・朝焼けは、頭上だけでなく日の入り方向 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° の空の雲も見ています。<br>`
+    + `<strong>これは予報です。</strong>実際の空とは違うことがあります。見に行くかどうかの目安としてお使いください。<br>`
     + `予報: Open-Meteo ／ 実況: 気象庁アメダス ／ 光害: <a href="https://djlorenz.github.io/astronomy/lp/">Lorenz Light Pollution Atlas 2025</a>（VIIRS） ／ 検索: OSM Nominatim ・ 国土地理院`;
 }
 
@@ -312,7 +376,7 @@ function renderPhenomenon(id, now) {
          <div class="scorebar" style="max-width:150px;margin-top:5px"><div style="width:${ev.score}%;background:${RANK_COLOR[ev.rank.key]}"></div></div>
        </div>
        <span class="score" style="color:${RANK_COLOR[ev.rank.key]}">${Math.round(ev.score)}
-         <div class="badge" style="font-size:0.69rem;color:${RANK_COLOR[ev.rank.key]};background:color-mix(in srgb,${RANK_COLOR[ev.rank.key]} 14%,transparent)">${ev.rank.label}</div></span>`;
+         <div class="badge" style="font-size:0.69rem;color:${RANK_COLOR[ev.rank.key]};background:color-mix(in srgb,${RANK_COLOR[ev.rank.key]} 14%,transparent)">${S.phrasing(id, ev.rank).label}</div></span>`;
   return `<details class="detail" data-id="${id}" ${selectedDay[id] ? "open" : ""}>
     <summary class="row"><span class="icon">${meta.icon}</span>${head}<span class="chev muted">▸</span></summary>
     ${ev.unavailable ? "" : renderDetail(id, sel, now)}
@@ -322,12 +386,89 @@ function renderPhenomenon(id, now) {
   </details>`;
 }
 
-function renderDetail(id, sel, now) {
+/// 2ペインの左側。押すと右の詳細が切り替わる。
+function renderPickRow(id, now) {
+  const entries = weeks[id];
+  const u = upcoming(entries, now);
+  const meta = S.PHENOMENA[id];
+  if (!u) return "";
+  const sel = entries.find((e) => e.dayMs === selectedDay[id]) || u;
+  const ev = sel.evaluation;
+  const on = id === picked ? " picked" : "";
+  if (ev.unavailable) {
+    return `<button class="row${on}" data-pick="${id}"><span class="icon">${meta.icon}</span>
+      <span class="body"><strong>${meta.name}</strong>
+        <div class="muted">${esc(ev.unavailable.message)}</div></span></button>`;
+  }
+  const color = RANK_COLOR[ev.rank.key];
+  return `<button class="row${on}" data-pick="${id}"><span class="icon">${meta.icon}</span>
+    <span class="body"><strong>${meta.name}</strong>
+      <span class="muted">${S.JstCal.relativeDay(sel.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</span>
+      <div class="scorebar" style="margin-top:5px"><div style="width:${ev.score}%;background:${color}"></div></div>
+    </span>
+    <span class="score" style="color:${color}">${Math.round(ev.score)}
+      <div class="badge" style="font-size:0.69rem;color:${color};background:color-mix(in srgb,${color} 14%,transparent)">${S.phrasing(id, ev.rank).label}</div></span>
+  </button>`;
+}
+
+/// 2ペインの右側。選択中の現象の詳細をまとめて出す。
+function renderDetailPane(id, now) {
+  const entries = weeks[id];
+  if (!entries || !entries.length) return "";
+  const u = upcoming(entries, now);
+  const sel = entries.find((e) => e.dayMs === selectedDay[id]) || u;
+  const ev = sel.evaluation;
+  const meta = S.PHENOMENA[id];
+  const head = ev.unavailable
+    ? `<div class="card"><div style="display:flex;gap:10px;align-items:center">
+         <span style="font-size:1.9rem">${meta.icon}</span>
+         <span><strong style="font-size:1.19rem">${meta.name}</strong>
+         <div class="muted">${esc(ev.unavailable.message)}</div></span></div></div>`
+    : `<div class="card"><div style="display:flex;gap:12px;align-items:center">
+         <span style="font-size:1.9rem">${meta.icon}</span>
+         <span style="flex:1"><strong style="font-size:1.19rem">${meta.name}</strong>
+           <div class="muted">${S.JstCal.relativeDay(sel.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</div></span>
+         <span style="text-align:right"><div class="big" style="color:${RANK_COLOR[ev.rank.key]}">${Math.round(ev.score)}</div>
+           <span class="badge" style="color:${RANK_COLOR[ev.rank.key]};background:color-mix(in srgb,${RANK_COLOR[ev.rank.key]} 14%,transparent)">${S.phrasing(id, ev.rank).label}</span></span></div>
+       <div class="scorebar" style="margin:10px 0 8px"><div style="width:${ev.score}%;background:${RANK_COLOR[ev.rank.key]}"></div></div>
+       <div>${esc(S.phrasing(id, ev.rank).say)}</div></div>`;
+  return `<div data-id="${id}">${head}
+    ${ev.unavailable ? "" : `<div class="card">${renderDetail(id, sel, now, { hideSay: true })}</div>`}
+    <div class="card">${renderWeek(id, entries, sel, now)}${renderTable(id, entries)}</div>
+    <p class="tiny" style="padding:0 4px">📖 ${esc(ev.source)}</p></div>`;
+}
+
+// 効き具合を記号にする。数字を読まなくても、何が良くて何が足を引っ張っているかが分かる。
+//
+// 符号だけで決めてはいけない。星空の雲量のように「減点しか無い」要素では、
+// 小さな減点はむしろ good な状態を意味する（雲量8%で -4.5 に ✕ を出すと、
+// 説明文の「ほとんど雲がありません」と矛盾する）。
+// そこで、その評価の中で最も大きな減点・加点を基準にした相対的な重さで決める。
+function factorMark(c, maxPositive, maxNegative) {
+  if (c < 0) {
+    const severity = maxNegative > 0 ? Math.abs(c) / maxNegative : 1;
+    if (severity >= 0.6) return { m: "✕", color: "var(--red)" };
+    if (severity >= 0.25) return { m: "△", color: "var(--orange)" };
+    return { m: "○", color: "var(--accent)" };
+  }
+  if (c > 0) {
+    return c >= maxPositive * 0.6
+      ? { m: "◎", color: "var(--accent)" }
+      : { m: "○", color: "var(--accent)" };
+  }
+  return { m: "－", color: "var(--tertiary)" };
+}
+
+function renderDetail(id, sel, now, opts = {}) {
   const ev = sel.evaluation;
   const maxAbs = Math.max(1, ...ev.factors.map((f) => Math.abs(f.c)));
+  const maxPos = Math.max(0.01, ...ev.factors.map((f) => f.c));
+  const maxNeg = Math.max(0.01, ...ev.factors.map((f) => -f.c));
   const factors = ev.factors.map((f) => {
     const pos = f.c >= 0, w = Math.min(50, 50 * Math.abs(f.c) / maxAbs);
-    return `<div class="f"><div class="fh"><span>${esc(f.label)}</span>
+    const mk = factorMark(f.c, maxPos, maxNeg);
+    return `<div class="f"><div class="fh">
+      <span><span class="mark" style="color:${mk.color}">${mk.m}</span>${esc(f.label)}</span>
       <strong style="color:${pos ? "var(--accent)" : "var(--red)"}">${f.c >= 0 ? "+" : ""}${f.c.toFixed(1)}</strong></div>
       <div class="bar"><span class="mid"></span>
         <span class="fill" style="${pos ? `left:50%` : `left:${50 - w}%`};width:${w}%;background:${pos ? "var(--accent)" : "var(--red)"};opacity:.75"></span></div>
@@ -344,15 +485,16 @@ function renderDetail(id, sel, now) {
   const current = findSighting(id, ev.peak);
   const outcomes = [["seen", "見えた"], ["missed", "見えなかった"], ["unchecked", "確認せず"]];
   const record = finished
-    ? `<div style="padding:8px 0"><div class="muted" style="margin-bottom:6px">実際どうだった？</div>
+    ? `<div style="padding:8px 0"><div style="margin-bottom:6px">実際に見えましたか？</div>
        <div class="outcome">${outcomes.map(([k, l]) =>
          `<button data-outcome="${k}" data-pid="${id}" data-peak="${ev.peak}" class="${current?.outcome === k ? "on" : ""}">${l}</button>`).join("")}</div></div>`
-    : `<p class="tiny" style="padding:4px 0">${S.JstCal.hhmmRounded(ev.peak)} を過ぎたら「見えたか」を記録できます</p>`;
+    : `<p class="tiny" style="padding:4px 0">${S.JstCal.hhmmRounded(ev.peak)} を過ぎたら記録できます</p>`;
   return `<div style="padding:4px 0 6px">
-    <div class="tiny" style="margin-bottom:4px">${CONF_ICON[ev.confidence.key]} 信頼度${ev.confidence.label}（${Math.round(ev.spread[0])}–${Math.round(ev.spread[1])}）・ ${ev.confidence.caption}</div>
-    <div class="section-h"><h2>なぜこのスコアか</h2><span class="tiny">基準 ${Math.round(ev.base)} → ${Math.round(ev.score)}</span></div>
+    ${opts.hideSay ? "" : `<div style="font-size:0.94rem;margin-bottom:4px">${esc(S.phrasing(id, ev.rank).say)}</div>`}
+    <div class="tiny" style="margin-bottom:8px">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div>
+    <div class="section-h"><h2>この点数のわけ</h2><span class="tiny">基準 ${Math.round(ev.base)} → ${Math.round(ev.score)}</span></div>
     <div class="factors">${factors}</div>
-    <div class="section-h" style="margin-top:8px"><h2>モデル別</h2></div>${perModel}
+    <div class="section-h" style="margin-top:8px"><h2>4つの予報モデルの見立て</h2></div>${perModel}
     ${record}
   </div>`;
 }
@@ -471,7 +613,7 @@ function renderRecords() {
       <span style="flex:1"><strong style="font-size:0.81rem">${S.JstCal.monthDay(s.peak)} ${esc(s.placeName)}</strong>
         <div class="tiny">${S.PHENOMENA[s.phenomenon].name} ・ ${Math.round(s.score)}点</div></span>
       <span class="badge" style="background:var(--line)">${OUTCOME_LABEL[s.outcome]}</span></div>`).join("")
-    || `<p class="tiny" style="padding:8px 0">現象を開いて「実際どうだった？」を押すと貯まります。</p>`;
+    || `<p class="tiny" style="padding:8px 0">現象を開いて「実際に見えましたか？」に答えると貯まります。</p>`;
 }
 
 // ---------------------------------------------------------------- 地点
@@ -595,6 +737,9 @@ $("importFile").onchange = async (e) => {
   }
   e.target.value = "";
 };
+
+// 幅が閾値をまたいだら描画し直す（ウィンドウのリサイズ・画面回転）
+WIDE.addEventListener("change", () => { if (bundle) render(); });
 
 load(false);
 </script>

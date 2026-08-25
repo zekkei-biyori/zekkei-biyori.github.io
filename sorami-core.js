@@ -451,10 +451,14 @@
     const ordered = [...factors].sort((a, b) => Math.abs(b.c) - Math.abs(a.c));
     if (Math.abs(final - raw) > 0.005) {
       const capped = final < raw;
+      // 「頭打ち」「下支え」は内部用語で、利用者には何のことか伝わらない。
+      // 理由そのものを見出しにして、補足で仕組みを説明する。
       ordered.push({
-        label: capped ? "頭打ち" : "下支え",
+        label: capped ? (ceilingReason || "この条件では上限まで") : "ここが下限",
         c: final - raw,
-        detail: capped ? (ceilingReason || "この条件では上限に達している") : "下限で止めている",
+        detail: capped
+          ? "この条件では、ほかが良くてもここまでにとどめています"
+          : "これ以上は下がりません",
       });
     }
     return { score: final, base, factors: ordered, unavailable: null, refinedWindow: refinedWindow || null };
@@ -482,9 +486,9 @@
   function cloudDetail(raw, overcast, heavilyObscured, absent, present) {
     // 空一面かどうかを先に見る。覆い尽くしでも三角カーブは 0 を返すため、
     // 順序を逆にすると「一面の巻層雲」を「雲がない」と説明してしまう。
-    if (overcast > 1) return "空一面を覆い、光が拡散して平板になる";
+    if (overcast > 1) return "空一面を覆い、光が散って平板な空になります";
     if (raw <= 0) return absent;
-    if (heavilyObscured) return "下層雲に隠れて見えにくい";
+    if (heavilyObscured) return "低い雲に隠れて見えにくい状態です";
     return present;
   }
 
@@ -517,38 +521,38 @@
         const highRaw = Curve.triangular(high, s.highCloudLow, s.highCloudPeak, s.highCloudHigh);
         const highOvercast = Curve.ramp(high, s.highCloudOvercastStart, 100) * s.highCloudOvercastPenalty;
         const highBonus = highRaw * s.highCloudBonus * visibleFraction - highOvercast;
-        factors.push(factor(`高層雲 ${pct(high)}`, highBonus,
+        factors.push(factor(`上層の雲 ${pct(high)}`, highBonus,
           cloudDetail(highRaw, highOvercast, heavilyObscured,
-            high < s.highCloudPeak ? "光を受ける高層雲がない" : "多すぎて光が抜けない",
-            "巻雲が光を受ける面になる")));
+            high < s.highCloudPeak ? "光を受ける雲が空高くにない" : "雲が多すぎて光が抜けません",
+            "すじ雲が夕日を受ける面になります")));
 
         const midRaw = Curve.triangular(mid, s.midCloudLow, s.midCloudPeak, s.midCloudHigh);
         const midBonus = midRaw * s.midCloudBonus * visibleFraction;
-        factors.push(factor(`中層雲 ${pct(mid)}`, midBonus,
+        factors.push(factor(`中層の雲 ${pct(mid)}`, midBonus,
           cloudDetail(midRaw, 0, heavilyObscured,
-            mid < s.midCloudLow ? "中層雲がほとんどない" : "多すぎて光が抜けない",
-            "空に立体感が出る")));
+            mid < s.midCloudLow ? "中層に雲がほとんどありません" : "雲が多すぎて光が抜けません",
+            "空に奥行きが出ます")));
 
         if (low <= s.lowCloudClear) {
-          factors.push(factor(`低層雲 ${pct(low)}`, s.lowCloudBonus, "頭上が開けている"));
+          factors.push(factor(`下層の雲 ${pct(low)}`, s.lowCloudBonus, "頭上は開けています"));
         } else if (low >= s.lowCloudPenaltyStart) {
           const ratio = Curve.ramp(low, s.lowCloudPenaltyStart, s.lowCloudPenaltyFull);
-          factors.push(factor(`低層雲 ${pct(low)}`, -ratio * s.lowCloudPenalty, "頭上を覆って空が見えない"));
+          factors.push(factor(`下層の雲 ${pct(low)}`, -ratio * s.lowCloudPenalty, "低い雲が頭上を覆っています"));
         } else {
           const ratio = 1 - Curve.ramp(low, s.lowCloudClear, s.lowCloudPenaltyStart);
-          factors.push(factor(`低層雲 ${pct(low)}`, ratio * s.lowCloudBonus, "頭上が開けている"));
+          factors.push(factor(`下層の雲 ${pct(low)}`, ratio * s.lowCloudBonus, "頭上は開けています"));
         }
 
         const sunwardLow = input.offsets?.low?.mean("cloud_cover_low", ws, we) ?? null;
         if (sunwardLow !== null) {
           const penalty = -Curve.ramp(sunwardLow, s.sunwardLowPenaltyStart, s.sunwardLowPenaltyFull) * s.sunwardLowPenalty;
-          factors.push(factor(`太陽方位側の低層雲 ${pct(sunwardLow)}`, penalty,
-            penalty < -1 ? "約165km先で光が遮られる" : "光路は開けている"));
+          factors.push(factor(`日の入り方向の下層雲 ${pct(sunwardLow)}`, penalty,
+            penalty < -1 ? "約165km先で夕日がさえぎられます" : "夕日の通り道は開けています"));
         }
         const sunwardHigh = input.offsets?.high?.mean("cloud_cover_high", ws, we) ?? null;
         if (sunwardHigh !== null) {
           const bonus = Curve.triangular(sunwardHigh, s.highCloudLow, s.highCloudPeak, s.highCloudHigh) * s.sunwardHighBonus;
-          factors.push(factor(`太陽方位側の高層雲 ${pct(sunwardHigh)}`, bonus, "約368km先で光を受ける雲"));
+          factors.push(factor(`日の入り方向の上層雲 ${pct(sunwardHigh)}`, bonus, "約368km先で夕日を受ける雲があります"));
         }
 
         // 気圧面の相対湿度。モデルが返さない面がある（jma_msm の 200hPa は全 null）ので取れた面だけ平均する。
@@ -565,10 +569,10 @@
           if (!available.length) continue;
           const rh = available.reduce((a, b) => a + b, 0) / available.length;
           if (rh > s.overcastRH) {
-            factors.push(factor(`${name}の湿度 ${pct(rh)}`, -s.overcastRHPenalty, "90%超は曇天域"));
+            factors.push(factor(`${name}の湿り ${pct(rh)}`, -s.overcastRHPenalty, "90%超は曇りの空気です"));
           } else {
             const fit = Curve.band(rh, band[0], band[1], s.rhTolerance);
-            factors.push(factor(`${name}の湿度 ${pct(rh)}`, fit * bonus, `最適帯 ${band[0]}〜${band[1]}%`));
+            factors.push(factor(`${name}の湿り ${pct(rh)}`, fit * bonus, `ちょうどよいのは ${band[0]}〜${band[1]}%`));
           }
         }
 
@@ -585,7 +589,7 @@
         const precip = series.max("precipitation", ws, we);
         if (precip !== null && precip > s.precipThreshold) {
           const ratio = Curve.ramp(precip, s.precipThreshold, s.precipFull);
-          factors.push(factor(`降水 ${f1(precip)}mm`, -(0.4 + 0.6 * ratio) * s.precipPenalty, "降っていると焼けない"));
+          factors.push(factor(`降水 ${f1(precip)}mm`, -(0.4 + 0.6 * ratio) * s.precipPenalty, "雨が降っていると空は染まりません"));
           ceiling = Math.min(ceiling ?? Infinity, s.precipCeiling);
           ceilingReason = "降水があると焼けない";
         }
@@ -593,8 +597,8 @@
         if (series.isSupported("visibility")) {
           const vis = series.mean("visibility", ws, we);
           if (vis !== null) {
-            if (vis >= s.visGood) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, s.visBonus, "遠くまで抜けている"));
-            else if (vis <= s.visPoor) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, -s.visPenalty, "霞んで色が乗らない"));
+            if (vis >= s.visGood) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, s.visBonus, "遠くまで見通せます"));
+            else if (vis <= s.visPoor) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, -s.visPenalty, "かすんで色が乗りにくい状態です"));
           }
         }
 
@@ -621,20 +625,20 @@
       if (cloud === null) return unavailable("missingData", "雲量が得られませんでした");
       const factors = [];
       factors.push(factor(`雲量 ${pct(cloud)}`, -Curve.ramp(cloud, 0, 100) * s.cloudPenalty,
-        cloud < 20 ? "ほぼ雲なし" : cloud > 70 ? "厚い雲に覆われる" : "雲が出入りする"));
+        cloud < 20 ? "ほとんど雲がありません" : cloud > 70 ? "厚い雲に覆われます" : "雲が出たり入ったりします"));
       const precip = series.max("precipitation", ws, we);
       if (precip !== null && precip > s.precipThreshold) {
-        factors.push(factor(`降水 ${f1(precip)}mm`, -s.precipPenalty, "雨天では観測できない"));
+        factors.push(factor(`降水 ${f1(precip)}mm`, -s.precipPenalty, "雨では星は見えません"));
       }
       const moonPeak = Moon.peakBrightness(ws, we, input.lat, input.lon);
       const moonState = Moon.state(ws + (we - ws) / 2, input.lat, input.lon);
       factors.push(factor(`月明かり 輝面比${pct(moonState.illuminatedFraction * 100)}`, -moonPeak * s.moonlightPenalty,
-        moonPeak < 0.05 ? "月明かりの影響はほぼ無い" : `月齢${Math.round(moonState.age)}・夜間の最大高度で評価`));
+        moonPeak < 0.05 ? "月明かりの影響はほぼありません" : `月齢${Math.round(moonState.age)}。夜のあいだで最も高いときで見ています`));
       let atmospherePenalty = 0, atmosphereDetail = "";
       const humidity = series.mean("relative_humidity_2m", ws, we);
       if (humidity !== null && humidity > s.humidityStart) {
         atmospherePenalty = Curve.ramp(humidity, s.humidityStart, 100) * s.atmospherePenalty;
-        atmosphereDetail = `湿度 ${pct(humidity)}・霞みやすい`;
+        atmosphereDetail = `湿度 ${pct(humidity)}。かすみやすい空気です`;
       }
       if (series.isSupported("visibility")) {
         const vis = series.mean("visibility", ws, we);
@@ -643,7 +647,7 @@
           if (p > atmospherePenalty) { atmospherePenalty = p; atmosphereDetail = `視程 ${Math.round(vis / 1000)}km`; }
         }
       }
-      if (atmospherePenalty > 0) factors.push(factor("大気の透明度", -atmospherePenalty, atmosphereDetail));
+      if (atmospherePenalty > 0) factors.push(factor("空気の澄み", -atmospherePenalty, atmosphereDetail));
       // 光害はその地点の素質。天気と違い日ごとには変わらないが、
       // 同じ快晴・無月でも都心と山では見える星がまるで違う。それをスコアに反映する。
       if (input.lightPollution) {
@@ -655,7 +659,7 @@
       const elevation = input.elevation;
       if (elevation > s.elevStart) {
         factors.push(factor(`標高 ${Math.round(elevation)}m`,
-          Curve.ramp(elevation, s.elevStart, s.elevFull) * s.elevBonus, "気柱が薄く空が暗い"));
+          Curve.ramp(elevation, s.elevStart, s.elevFull) * s.elevBonus, "空気が薄く、空が暗くなります"));
       }
       return buildScore(s.base, factors);
     },
@@ -694,24 +698,24 @@
       if (wind !== null) {
         const calm = 1 - Curve.ramp(wind, s.windCalm, s.windFail);
         factors.push(factor(`風速 ${f1(wind)}m/s`, calm * s.windBonus,
-          wind < s.windCalm ? "0.85m/s 未満。雲海が崩れない" : "風があると雲海は流される"));
+          wind < s.windCalm ? "ほぼ無風。雲海が崩れません" : "風があると雲海は流されます"));
       }
       const humidity = series.mean("relative_humidity_2m", ws, we);
       if (humidity !== null) {
         factors.push(factor(`早朝の湿度 ${pct(humidity)}`,
-          Curve.ramp(humidity, s.humidityThreshold - 10, 100) * s.humidityBonus, "逆転層内が飽和していること"));
+          Curve.ramp(humidity, s.humidityThreshold - 10, 100) * s.humidityBonus, "朝もやが立ちこめるだけの湿りがあります"));
       }
       const prevRain = series.sum("precipitation", prevStart, todayStart);
       if (prevRain !== null) {
         factors.push(factor(`前日の降水 ${f1(prevRain)}mm`,
           Curve.ramp(prevRain, 0, s.prevRainMm * 6) * s.prevRainBonus,
-          prevRain > s.prevRainMm ? "水蒸気の供給がある" : "水蒸気の供給が乏しい"));
+          prevRain > s.prevRainMm ? "前日の雨が水蒸気を残しています" : "もとになる水蒸気が足りません"));
       }
       const nightCloud = series.mean("cloud_cover", todayStart, ws);
       if (nightCloud !== null) {
         const clear = 1 - Curve.ramp(nightCloud, s.nightCloudClear, s.nightCloudFail);
         factors.push(factor(`夜間の雲量 ${pct(nightCloud)}`, clear * s.nightCloudBonus,
-          nightCloud < s.nightCloudClear ? "放射冷却が効く" : "雲が保温して冷え込まない"));
+          nightCloud < s.nightCloudClear ? "晴れて地面が冷え込みます" : "雲が布団になって冷え込みません"));
       }
       return buildScore(s.base, factors);
     },
@@ -748,11 +752,11 @@
       const cloud = series.mean("cloud_cover", ws, we);
       if (cloud !== null) {
         factors.push(factor(`雲量 ${pct(cloud)}`, (1 - Curve.ramp(cloud, s.clearSkyCloud, 80)) * s.clearBonus,
-          "放射冷却と、氷晶がきらめくための日射"));
+          "晴れて冷え込み、氷の粒が日射できらめきます"));
       }
       const wind = series.mean("wind_speed_10m", ws, we);
       if (wind !== null) {
-        factors.push(factor(`風速 ${f1(wind)}m/s`, (1 - Curve.ramp(wind, s.calmWind, 6)) * s.calmBonus, "ほぼ無風であること"));
+        factors.push(factor(`風速 ${f1(wind)}m/s`, (1 - Curve.ramp(wind, s.calmWind, 6)) * s.calmBonus, "風が弱いほど出やすくなります"));
       }
       return buildScore(base, factors);
     },
@@ -775,17 +779,17 @@
       if (temp > 5) return unavailable("outOfSeason", `気温 ${f1(temp)}℃。霧氷の季節ではありません`);
       const factors = [];
       factors.push(factor(`気温 ${f1(temp)}℃`, Curve.ramp(temp, s.tempThreshold, s.tempFull) * s.tempBonus,
-        temp <= s.tempThreshold ? "−5℃以下。樹氷が発達する温度域" : "−5℃ に届かず着氷しにくい"));
+        temp <= s.tempThreshold ? "−5℃以下。霧氷が育つ寒さです" : "−5℃に届かず、着きにくい寒さです"));
       const humidity = series.mean("relative_humidity_2m", ws, we);
       if (humidity !== null) {
         factors.push(factor(`湿度 ${pct(humidity)}`, Curve.ramp(humidity, s.humidityFloor, s.saturation) * s.humidityBonus,
-          humidity >= s.saturation ? "雲中・霧中とみなせる（過冷却水滴の供給）" : "過冷却水滴が不足。地上湿度による代替判定"));
+          humidity >= s.saturation ? "霧の中とみなせる湿りです" : "湿りが足りません（地上の湿度で代用しています）"));
       }
       const wind = series.mean("wind_speed_10m", ws, we);
       if (wind !== null) {
         factors.push(factor(`風速 ${f1(wind)}m/s`, Curve.band(wind, s.windLo, s.windHi, s.windTolerance) * s.windBonus,
-          wind >= s.windLo && wind <= s.windHi ? "1〜5m/s。過冷却水滴が運ばれ成長する"
-            : wind < s.windLo ? "弱すぎて水滴が運ばれない" : "強すぎて粗氷寄りになる"));
+          wind >= s.windLo && wind <= s.windHi ? "1〜5m/s。霧が運ばれて育ちます"
+            : wind < s.windLo ? "弱すぎて霧が運ばれません" : "強すぎて、ごつごつした氷になります"));
       }
       let qualifying = 0;
       for (const i of series.indices(ws, we)) {
@@ -797,7 +801,7 @@
       }
       if (qualifying > 0) {
         factors.push(factor(`条件成立 ${qualifying}時間`,
-          Curve.ramp(qualifying, 0, s.durationFull) * s.durationBonus, "着氷は時間をかけて成長する"));
+          Curve.ramp(qualifying, 0, s.durationFull) * s.durationBonus, "霧氷は時間をかけて育ちます"));
       }
       return buildScore(s.base, factors);
     },
@@ -841,7 +845,7 @@
         const convective = showers !== null && showers >= precip * 0.5;
         factors.push(factor(`${convective ? "にわか雨" : "降水"} ${f1(precip)}mm`,
           Curve.ramp(precip, s.precipThreshold, 2.0) * s.precipBonus,
-          convective ? "対流性の雨。セルの合間に日が差しやすい虹の典型" : "雨滴がなければ虹は出ない"));
+          convective ? "にわか雨。雲の切れ間から日が差しやすく、虹の出やすい降り方です" : "雨粒がなければ虹は出ません"));
 
         // 直射日光。太陽を背にした観測者に日が当たっていることが虹の必須条件。
         // 晴天時の直達日射の目安（900×sin高度）に対する比で「雨の時間に日が差すか」を見る。
@@ -850,7 +854,7 @@
           const potential = s.clearSkyDirectMax * Math.sin(sun.elevation * DEG);
           const fit = potential > 0 ? Curve.ramp(direct / potential, s.sunlightFitLo, s.sunlightFitHi) : 0;
           factors.push(factor(`直射日光 ${Math.round(direct)}W/m²`, fit * s.sunlightBonus,
-            fit > 0.5 ? "雨の時間にも日が差す見込み" : "雨雲に覆われ日が差しにくい"));
+            fit > 0.5 ? "雨のあいだも日が差しそうです" : "雨雲に覆われて日が差しにくい状態です"));
         }
 
         const candidate = buildScore(s.base, factors, null, "", [hourStart, hourStart + series.stepMs]);
@@ -858,14 +862,16 @@
       }
       if (best) return best;
       // 条件不成立も点数として返す（母数に残す）。
+      // 条件不成立は「加点」ではなく低い基準点そのもの。
+      // 寄与を付けると記号が ◎ になり、雨が無いのに好条件のように見えてしまう。
       if (sawRainHighSun) {
-        return buildScore(0, [factor("雨は太陽の高い時間帯のみ", 5,
-          "太陽高度42°超では主虹が地平線下に隠れる")]);
+        return buildScore(5, [factor("雨は太陽が高い時間帯だけ", 0,
+          "太陽が高すぎると、虹は地平線の下に隠れます")]);
       }
       if (sawRain) {
-        return buildScore(0, [factor("雨は夜間のみ", 2, "太陽が出ていなければ虹は出ない")]);
+        return buildScore(2, [factor("雨は夜のあいだだけ", 0, "太陽が出ていなければ虹は出ません")]);
       }
-      return buildScore(0, [factor("雨の予報がない", 2, "雨滴がなければ虹は出ない")]);
+      return buildScore(2, [factor("雨の予報がない", 0, "雨粒がなければ虹は出ません")]);
     },
   };
 
@@ -878,15 +884,61 @@
     rime: rimeScorer,
     diamondDust: diamondDustScorer,
   };
+  // 現象ごとのランク名と一言。
+  // 「絶景／良好／平凡／不向き」のような事務的な語だと、点数が何を意味するのかが伝わらない。
+  // その現象で実際に何が見られそうかを、そのまま言葉にする。
+  // 並びは [spectacular, good, fair, poor]。
   const PHENOMENA = {
-    sunset: { name: "夕焼け", icon: "🌇", order: 0 },
-    starrySky: { name: "星空", icon: "✨", order: 1 },
-    sunrise: { name: "朝焼け", icon: "🌅", order: 2 },
-    seaOfClouds: { name: "雲海", icon: "🌫️", order: 3 },
-    rainbow: { name: "虹", icon: "🌈", order: 4 },
-    rime: { name: "霧氷", icon: "❄️", order: 5 },
-    diamondDust: { name: "ダイヤモンドダスト", icon: "💠", order: 6 },
+    sunset: { name: "夕焼け", icon: "🌇", order: 0,
+      ranks: ["圧巻", "よく染まる", "ほんのり", "期待薄"],
+      says: ["空一面が燃えるように染まるかもしれません",
+             "きれいに色づきそうです",
+             "淡く色づく程度になりそうです",
+             "色づきは弱そうです"] },
+    starrySky: { name: "星空", icon: "✨", order: 1,
+      ranks: ["満天", "よく見える", "そこそこ", "期待薄"],
+      says: ["数えきれないほどの星が見えるかもしれません",
+             "主な星座はよく見えそうです",
+             "明るい星なら見えそうです",
+             "星は見えにくそうです"] },
+    sunrise: { name: "朝焼け", icon: "🌅", order: 2,
+      ranks: ["圧巻", "よく染まる", "ほんのり", "期待薄"],
+      says: ["朝の空が一面染まるかもしれません",
+             "きれいに色づきそうです",
+             "淡く色づく程度になりそうです",
+             "色づきは弱そうです"] },
+    seaOfClouds: { name: "雲海", icon: "🌫️", order: 3,
+      ranks: ["大雲海", "出そう", "五分五分", "期待薄"],
+      says: ["谷を埋めつくす雲海が期待できます",
+             "雲海が出る条件が揃っています",
+             "出るかどうかは五分五分です",
+             "雲海は出にくそうです"] },
+    rainbow: { name: "虹", icon: "🌈", order: 4,
+      ranks: ["好条件", "出るかも", "わずかに", "期待薄"],
+      says: ["日差しと雨が重なり、虹が架かるかもしれません",
+             "日差しと雨が重なりそうです",
+             "条件がわずかに揃っています",
+             "虹は出にくそうです"] },
+    rime: { name: "霧氷", icon: "❄️", order: 5,
+      ranks: ["見頃", "着きそう", "わずかに", "期待薄"],
+      says: ["枝が白く覆われた霧氷が期待できます",
+             "枝が白くなりそうです",
+             "うっすら着く程度かもしれません",
+             "霧氷は着きにくそうです"] },
+    diamondDust: { name: "ダイヤモンドダスト", icon: "💠", order: 6,
+      ranks: ["好条件", "期待できる", "わずかに", "期待薄"],
+      says: ["空気中の氷がきらめくかもしれません",
+             "条件はまずまず整っています",
+             "発生する可能性は低めです",
+             "発生しにくい条件です"] },
   };
+
+  /// その現象での言い方を返す。汎用の RANKS より、こちらを画面に出す。
+  function phrasing(phenomenonId, rank) {
+    const meta = PHENOMENA[phenomenonId];
+    const i = { spectacular: 0, good: 1, fair: 2, poor: 3 }[rank.key];
+    return { label: meta.ranks[i], say: meta.says[i] };
+  }
 
   // ---------------------------------------------------------------- アンサンブル
   // 中央値を採るのは 2026-08-22 18:00 JST の実測（jma_msm 0.0mm vs icon 3.1mm）に基づく。
@@ -1207,7 +1259,7 @@
     Geo, JstCal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
     HOME_VARS, OFFSET_VARS, CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
-    rankOf, confidenceOf, Amedas, Nowcast, LightPollution,
+    rankOf, confidenceOf, phrasing, Amedas, Nowcast, LightPollution,
   };
   global.Sorami = Sorami;
   if (typeof module !== "undefined" && module.exports) module.exports = Sorami;

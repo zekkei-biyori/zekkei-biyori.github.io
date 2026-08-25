@@ -49,7 +49,11 @@ check("spread.high", ev.spread[1], expected.sunset_spread[1], 0.001);
 check("peak", ev.peak / 1000, expected.sunset_peak_epoch, 0.5);
 for (const m of S.MODELS) check(`perModel.${m}`, ev.perModel[m], expected.sunset_perModel[m], 0.001);
 
-console.log("== 内訳（ラベルと寄与の完全一致） ==");
+console.log("== 内訳（寄与と観測値の一致） ==");
+// 文言は Web 版で平易化したため Swift と異なる（表示の問題）。
+// 検証したいのは計算なので、寄与の値と、ラベルに埋め込まれた観測値（数字）を比べる。
+// これで「順序が変わった」「値が変わった」は捕まえられる。
+const digits = (s) => (s.match(/-?\d+(?:\.\d+)?/g) || []).join(",");
 const expFactors = expected.sunset_factors;
 if (ev.factors.length !== expFactors.length) {
   failures++; console.log(`  NG factor数: js=${ev.factors.length} swift=${expFactors.length}`);
@@ -57,8 +61,9 @@ if (ev.factors.length !== expFactors.length) {
   console.log("  swift:", expFactors.map((f) => f.label));
 } else {
   ev.factors.forEach((f, i) => {
-    if (f.label !== expFactors[i].label) { failures++; console.log(`  NG label[${i}]: js='${f.label}' swift='${expFactors[i].label}'`); }
-    else check(`factor '${f.label}'`, f.c, expFactors[i].c, 0.001);
+    const a = digits(f.label), b = digits(expFactors[i].label);
+    if (a !== b) { failures++; console.log(`  NG 観測値[${i}]: js='${f.label}'(${a}) swift='${expFactors[i].label}'(${b})`); }
+    else check(`寄与[${i}] ${f.label}`, f.c, expFactors[i].c, 0.001);
   });
 }
 
