@@ -526,6 +526,34 @@
   const factor = (label, c, detail) => ({ label, c: c === 0 ? 0 : c, detail: detail || "" });
 
   // ---------------------------------------------------------------- スコアラ
+  // リードタイム（何日先か）による信頼度の減衰。
+  //
+  // verify-leadtime.mjs による実測（10地点×過去60日＝550標本、日の入り時刻、
+  // 実況は ERA5 再解析）:
+  //
+  //   何日前  全雲量の相関  降水の相関
+  //     0        0.613       0.604
+  //     1        0.592       0.408
+  //     2        0.440       0.292
+  //     3        0.580       0.260
+  //     4        0.510       0.146
+  //     5        0.466       0.188
+  //     6        0.281       0.148
+  //     7        0.325       0.283
+  //
+  // 降水は1日先で既に相関が3分の2へ落ち、3日先で半分以下になる。
+  // 雲量も6日先で相関 0.28 まで落ちる。
+  // モデル間のばらつきだけでは、この劣化が信頼度に反映されない
+  //（実測でばらつき幅は +0日 54.8 → +6日 67.4 とほとんど広がらなかった）。
+  // そこで、ばらつき幅に日数ぶんの下駄を履かせる。
+  // 係数は上の相関の落ち方に合わせた本アプリの見立てで、文献値ではない。
+  const LEAD_TIME_PENALTY = [0, 6, 12, 16, 20, 23, 26, 28];
+
+  function leadTimePenalty(daysAhead) {
+    const i = Math.max(0, Math.min(LEAD_TIME_PENALTY.length - 1, Math.round(daysAhead)));
+    return LEAD_TIME_PENALTY[i];
+  }
+
   const RANKS = [
     { key: "spectacular", label: "絶景", min: 85 },
     { key: "good", label: "良好", min: 65 },
@@ -533,9 +561,13 @@
     { key: "poor", label: "不向き", min: -1 },
   ];
   const rankOf = (score) => RANKS.find((r) => score >= r.min);
-  const confidenceOf = (width) => (width < 15
+  // 信頼度の境界。
+  // 当初は 15/30 としていたが、実測すると当日でさえ5地点中4つが「低」になり、
+  // 警告として意味を失っていた（常に赤なら誰も見ない）。
+  // 8モデルのばらつき幅は実際に 50〜70 程度あるのが普通なので、実態に合わせる。
+  const confidenceOf = (width) => (width < 30
     ? { key: "high", label: "高", caption: "モデルの見解が揃っています" }
-    : width < 30
+    : width < 55
       ? { key: "medium", label: "中", caption: "モデルの見解に幅があります" }
       : { key: "low", label: "低", caption: "モデルの見解が割れています" });
 
@@ -1060,6 +1092,10 @@
     const scores = evaluated.map(([, r]) => r.score);
     const median = Curve.median(scores);
     const low = Math.min(...scores), high = Math.max(...scores);
+    // 何日先か。先の日ほど、モデルが揃っていても当たらない。
+    const daysAhead = Math.max(0, Math.round(
+      (JstCal.startOfDay(dayMs) - JstCal.startOfDay(Date.now())) / 86400000));
+    const effectiveWidth = (high - low) + leadTimePenalty(daysAhead);
     let representative = evaluated[0];
     for (const entry of evaluated) {
       const da = Math.abs(entry[1].score - median), db = Math.abs(representative[1].score - median);
@@ -1080,7 +1116,8 @@
       factors: representative[1].factors,
       perModel: Object.fromEntries(evaluated.map(([m, r]) => [m, r.score])),
       spread: [low, high],
-      confidence: confidenceOf(high - low),
+      daysAhead,
+      confidence: confidenceOf(effectiveWidth),
       source: scorer.source,
       rank: rankOf(representative[1].score),
     };
@@ -1340,7 +1377,7 @@
     Geo, JstCal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
     HOME_VARS, OFFSET_VARS, CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
-    rankOf, confidenceOf, phrasing, Amedas, Nowcast, LightPollution,
+    rankOf, confidenceOf, phrasing, leadTimePenalty, Amedas, Nowcast, LightPollution,
   };
   global.Sorami = Sorami;
   if (typeof module !== "undefined" && module.exports) module.exports = Sorami;

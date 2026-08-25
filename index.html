@@ -176,8 +176,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=202608251810"></script>
-<script src="sorami-core.js?v=202608251810"></script>
+<script src="spots.js?v=202608251859"></script>
+<script src="sorami-core.js?v=202608251859"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -190,9 +190,20 @@ const RANK_COLOR = { spectacular: "var(--spectacular)", good: "var(--good)", fai
 function confidenceText(ev) {
   const lo = Math.round(ev.spread[0]), hi = Math.round(ev.spread[1]);
   const n = Object.keys(ev.perModel).length;
-  if (ev.confidence.key === "high") return `${n}つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`;
-  if (ev.confidence.key === "medium") return `予報モデルによって ${lo}〜${hi}点 と幅があります`;
-  return `予報モデルの見立てが ${lo}〜${hi}点 と大きく割れています。外れることがあります`;
+  const d = ev.daysAhead || 0;
+  // 信頼度が低い理由は2つあり、利用者にとって意味が違う。
+  //   モデルが割れている → 天気が読みにくい日
+  //   先の予報だから     → 日が近づけば分かる
+  // どちらなのかを言い分ける。
+  const spreadWide = hi - lo >= 30;
+  const parts = [];
+  if (ev.confidence.key === "high") parts.push(`${n}つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`);
+  else if (spreadWide) parts.push(`予報モデルの見立てが ${lo}〜${hi}点 と割れています`);
+  else parts.push(`予報モデルは ${lo}〜${hi}点 でおおむね揃っています`);
+
+  if (d >= 5) parts.push(`${d}日先の予報は当たりにくいので、日が近づいたら見直してください`);
+  else if (d >= 2) parts.push(`${d}日先なので、当日の予報より外れやすくなります`);
+  return parts.join("。");
 }
 const CONF_ICON = { high: "◎", medium: "△", low: "⚠︎" };
 
