@@ -383,14 +383,16 @@
     "ecmwf_aifs025_single",    // ECMWF AIFS（機械学習ベース。従来手法と系統誤差が異なる）
     "gfs_seamless",            // NOAA GFS
     "ukmo_global_deterministic_10km", // 英国気象局
-    "gem_global",              // カナダ GEM
     "meteofrance_arpege_world",// フランス ARPEGE
+    // カナダ GEM は採用しない。verify.mjs による検証（10地点30日・270標本）で
+    // 上層の雲が MAE 46.07・偏り −45.9 と突出して外れていた。診断したところ
+    // 上層雲が平均 4.2%・最大 38% しか出ておらず（他モデルは最大100%）、
+    // 変数の定義かスケールが他と異なる。夕焼けで最重要の要素なので中央値を汚す。
   ];
   const MODEL_NAMES = {
     jma_msm: "気象庁MSM", jma_gsm: "気象庁GSM", icon_seamless: "ICON",
     ecmwf_ifs025: "ECMWF", ecmwf_aifs025_single: "ECMWF AI", gfs_seamless: "GFS",
-    ukmo_global_deterministic_10km: "英国気象局", gem_global: "カナダGEM",
-    meteofrance_arpege_world: "ARPEGE",
+    ukmo_global_deterministic_10km: "英国気象局", meteofrance_arpege_world: "ARPEGE",
   };
   const HOME_VARS = [
     "temperature_2m", "relative_humidity_2m", "dew_point_2m", "precipitation", "weather_code",
