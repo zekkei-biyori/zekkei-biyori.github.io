@@ -282,8 +282,22 @@
       obscuredStart: 40, obscuredFull: 90,
       precipThreshold: 0.1, precipFull: 2.0, precipPenalty: 40, precipCeiling: 30,
       visGood: 20000, visPoor: 10000, visBonus: 5, visPenalty: 10,
+
+      // エアロゾルとオゾン。夕焼けの色はレイリー散乱・オゾン吸収・エアロゾル消散で決まる。
+      // JAMC 2026 の観測研究は、最も価値のある class 1（焼け雲）が
+      // 「高い視程・低いエアロゾル光学的厚さ・低い対流性降水・低い全雲量」と
+      // 密接に関連すると報告している。空気が濁っていると光が減衰し、色が乗らない。
+      // 配点（±10 / ±6）は本アプリの見立てで、論文が示すのは向きと関連の強さまで。
+      aodClean: 0.15, aodHazy: 0.60, aodBonus: 10, aodPenalty: 10,
+      // 黄砂は強く濁らせる。
+      dustHeavy: 20, dustPenalty: 8,
+      // オゾンは薄明の青〜紫に効く（チャップイス吸収帯）が、地上付近の濃度から
+      // 成層圏の光路を推し量ることはできず、実データでも常に満点になって
+      // 情報にならなかったため採用しない。全量オゾン（total column ozone）が
+      // 取れるようになれば再検討する。
+
       windowBefore: 20 * 60000, windowAfter: 15 * 60000,
-      source: "SunsetWx特許 US10459119 の気圧面別湿度帯と可視距離式に基づく",
+      source: "SunsetWx特許 US10459119 と、薄明の色の観測研究（JAMC 2026）に基づく",
     },
     starry: {
       base: 100, cloudPenalty: 60, precipThreshold: 0.1, precipPenalty: 40,
@@ -358,8 +372,26 @@
     sum(v, s, e) { const a = this.values(v, s, e); return a.length ? a.reduce((x, y) => x + y, 0) : null; }
   }
 
-  const MODELS = ["jma_msm", "icon_seamless", "ecmwf_ifs025", "gfs_seamless"];
-  const MODEL_NAMES = { jma_msm: "気象庁MSM", icon_seamless: "ICON", ecmwf_ifs025: "ECMWF", gfs_seamless: "GFS" };
+  // 数値予報モデル。中央値を採る設計なので、独立性の高いモデルが増えるほど
+  // 外れ値に引きずられにくくなる。2026-08-22 の東京の大雨では jma_msm が
+  // 降水 0.0mm、icon が 3.1mm と割れた（単独モデルは実際に外す）。
+  const MODELS = [
+    "jma_msm",                 // 気象庁 MSM（日本域 5km）
+    "jma_gsm",                 // 気象庁 GSM（全球）
+    "icon_seamless",           // DWD ICON
+    "ecmwf_ifs025",            // ECMWF IFS
+    "ecmwf_aifs025_single",    // ECMWF AIFS（機械学習ベース。従来手法と系統誤差が異なる）
+    "gfs_seamless",            // NOAA GFS
+    "ukmo_global_deterministic_10km", // 英国気象局
+    "gem_global",              // カナダ GEM
+    "meteofrance_arpege_world",// フランス ARPEGE
+  ];
+  const MODEL_NAMES = {
+    jma_msm: "気象庁MSM", jma_gsm: "気象庁GSM", icon_seamless: "ICON",
+    ecmwf_ifs025: "ECMWF", ecmwf_aifs025_single: "ECMWF AI", gfs_seamless: "GFS",
+    ukmo_global_deterministic_10km: "英国気象局", gem_global: "カナダGEM",
+    meteofrance_arpege_world: "ARPEGE",
+  };
   const HOME_VARS = [
     "temperature_2m", "relative_humidity_2m", "dew_point_2m", "precipitation", "weather_code",
     "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "visibility",
@@ -368,6 +400,10 @@
     "relative_humidity_500hPa", "relative_humidity_300hPa", "relative_humidity_200hPa",
   ];
   const OFFSET_VARS = ["cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "precipitation"];
+  // 大気組成（CAMS）。夕焼けの色はレイリー散乱・オゾン吸収・エアロゾル消散で決まる。
+  // 出典: A New Twilight Sky Color Prediction Model Based on Machine Learning Methods,
+  //       J. Appl. Meteor. Climatol. 65(5), 2026. doi:10.1175/JAMC-D-25-0206.1
+  const AIR_VARS = ["aerosol_optical_depth", "dust"];
   // 特許 US10459119 の可視距離式 d[mile] = 1.32 × √(高度[ft]) → km。
   const CLOUD_LAYERS = [
     { key: "low", altitudeFt: 6000, variable: "cloud_cover_low" },
@@ -417,6 +453,22 @@
 
   // 自地点＋夕焼け方位＋朝焼け方位の 3 リクエスト。
   // オフセット点は雲量 4 要素のみに絞って転送量とAPIコストを抑える。
+  /// 大気組成の予報。取れなくても致命的ではないので、失敗したら null を返す。
+  async function fetchAir(lat, lon, days) {
+    const p = new URLSearchParams({
+      latitude: lat.toFixed(4), longitude: lon.toFixed(4),
+      hourly: AIR_VARS.join(","), timezone: "auto", timeformat: "unixtime",
+      forecast_days: String(Math.min(days, 5)),   // 大気質は5日まで
+    });
+    try {
+      const raw = await fetchJSON(`https://air-quality-api.open-meteo.com/v1/air-quality?${p}`);
+      const times = raw.hourly.time.map((t) => t * 1000);
+      const columns = {};
+      for (const v of AIR_VARS) if (raw.hourly[v]) columns[v] = raw.hourly[v];
+      return new Series(times, columns);
+    } catch { return null; }
+  }
+
   async function fetchForecast(lat, lon, days = 8) {
     const now = Date.now();
     const sunsetAt = Sun.eventTime("sunset", now, lat, lon);
@@ -425,10 +477,11 @@
     const sunriseBearing = sunriseAt ? Sun.position(sunriseAt, lat, lon).azimuth : 90;
     const offsetsFor = (bearing) => CLOUD_LAYERS.map((l) => Geo.destination(lat, lon, bearing, l.offsetKm));
 
-    const [homeRaw, sunsetRaw, sunriseRaw] = await Promise.all([
+    const [homeRaw, sunsetRaw, sunriseRaw, air] = await Promise.all([
       fetchJSON(buildURL([{ latitude: lat, longitude: lon }], HOME_VARS, days, 1)),
       fetchJSON(buildURL(offsetsFor(sunsetBearing), OFFSET_VARS, days, 0)),
       fetchJSON(buildURL(offsetsFor(sunriseBearing), OFFSET_VARS, days, 0)),
+      fetchAir(lat, lon, days),
     ]);
     const asList = (raw) => (Array.isArray(raw) ? raw : [raw]).map(decodeLocation);
     const toOffsets = (list) => Object.fromEntries(CLOUD_LAYERS.map((l, i) => [l.key, list[i]]));
@@ -436,6 +489,7 @@
       home: asList(homeRaw)[0],
       sunsetOffsets: toOffsets(asList(sunsetRaw)),
       sunriseOffsets: toOffsets(asList(sunriseRaw)),
+      air,
       sunsetBearing, sunriseBearing,
       fetchedAt: now,
     };
@@ -599,6 +653,30 @@
           if (vis !== null) {
             if (vis >= s.visGood) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, s.visBonus, "遠くまで見通せます"));
             else if (vis <= s.visPoor) factors.push(factor(`視程 ${Math.round(vis / 1000)}km`, -s.visPenalty, "かすんで色が乗りにくい状態です"));
+          }
+        }
+
+        // --- 空気の濁り（エアロゾル・黄砂・オゾン） ---
+        const air = input.air;
+        if (air) {
+          const aod = air.mean("aerosol_optical_depth", ws, we);
+          if (aod !== null) {
+            // 澄んでいるほど光が減衰せず、雲が鮮やかに染まる。
+            const clean = 1 - Curve.ramp(aod, s.aodClean, s.aodHazy);
+            const contribution = clean * s.aodBonus - (1 - clean) * s.aodPenalty;
+            // 説明は寄与の向きに合わせる。同じ「やや濁っています」を
+            // 加点にも減点にも付けると、記号と文が食い違って読めなくなる。
+            const detail = contribution > 3 ? "よく澄んでいて、光がまっすぐ届きます"
+              : contribution > 0 ? "まずまず澄んでいます"
+              : contribution > -5 ? "やや濁っていて、色が乗りにくくなります"
+              : "空気が濁っていて、光が減って色が乗りにくい状態です";
+            factors.push(factor(`空気の澄み（エアロゾル ${aod.toFixed(2)}）`, contribution, detail));
+          }
+          const dust = air.mean("dust", ws, we);
+          if (dust !== null && dust > 1) {
+            factors.push(factor(`黄砂 ${Math.round(dust)}μg/m³`,
+              -Curve.ramp(dust, 1, s.dustHeavy) * s.dustPenalty,
+              "砂じんが光をさえぎり、色が濁ります"));
           }
         }
 
@@ -959,6 +1037,7 @@
       terrain: place.terrain || null,
       elevation: place.elevation ?? bundle.home.grid.elevation,
       lightPollution: place.lightPollution || null,
+      air: bundle.air || null,
     });
 
     const reference = makeInput(models[0]);

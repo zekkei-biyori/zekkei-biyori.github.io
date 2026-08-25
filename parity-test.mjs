@@ -47,7 +47,12 @@ check("base", ev.base, expected.sunset_base);
 check("spread.low", ev.spread[0], expected.sunset_spread[0], 0.001);
 check("spread.high", ev.spread[1], expected.sunset_spread[1], 0.001);
 check("peak", ev.peak / 1000, expected.sunset_peak_epoch, 0.5);
-for (const m of S.MODELS) check(`perModel.${m}`, ev.perModel[m], expected.sunset_perModel[m], 0.001);
+// フィクスチャは4モデル時代のもの。以後モデルを増やしたので、
+// 両方に存在するモデルだけ比べる（増やした分は固定データに無いのが正しい）。
+const sharedModels = S.MODELS.filter((m) => expected.sunset_perModel[m] !== undefined
+                                         && ev.perModel[m] !== undefined);
+console.log(`  （フィクスチャと共通のモデル: ${sharedModels.length}本）`);
+for (const m of sharedModels) check(`perModel.${m}`, ev.perModel[m], expected.sunset_perModel[m], 0.001);
 
 console.log("== 内訳（寄与と観測値の一致） ==");
 // 文言は Web 版で平易化したため Swift と異なる（表示の問題）。
@@ -70,7 +75,7 @@ if (ev.factors.length !== expFactors.length) {
 console.log("== 星空評価 ==");
 const starry = S.evaluate("starrySky", day, bundle, place);
 check("starryScore", starry.score, expected.starry_score, 0.001);
-for (const m of S.MODELS) check(`starry.${m}`, starry.perModel[m], expected.starry_perModel[m], 0.001);
+for (const m of sharedModels) check(`starry.${m}`, starry.perModel[m], expected.starry_perModel[m], 0.001);
 
 console.log(failures === 0 ? "\nPARITY OK — Swift と一致" : `\nPARITY NG — ${failures} 件不一致`);
 process.exit(failures === 0 ? 0 : 1);

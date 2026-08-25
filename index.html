@@ -78,7 +78,7 @@
   .pm { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; padding: 2px 0; }
   /* 文字サイズを大きくするとモデル名が折り返してバーと縦がずれる。
      幅は下限として扱い、名前は折り返さない。 */
-  .pm .n { min-width: 74px; flex: none; white-space: nowrap; color: var(--secondary); }
+  .pm .n { min-width: 86px; flex: none; white-space: nowrap; color: var(--secondary); }
   .pm .v { width: 26px; text-align: right; color: var(--secondary); }
   .pm .scorebar { flex: 1; height: 5px; }
 
@@ -176,8 +176,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=202608251631"></script>
-<script src="sorami-core.js?v=202608251631"></script>
+<script src="spots.js?v=202608251746"></script>
+<script src="sorami-core.js?v=202608251746"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -189,7 +189,8 @@ const RANK_COLOR = { spectacular: "var(--spectacular)", good: "var(--good)", fai
 // 4つの予報モデルの見立てがどれだけ揃っているかを、そのまま言葉にする。
 function confidenceText(ev) {
   const lo = Math.round(ev.spread[0]), hi = Math.round(ev.spread[1]);
-  if (ev.confidence.key === "high") return `4つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`;
+  const n = Object.keys(ev.perModel).length;
+  if (ev.confidence.key === "high") return `${n}つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`;
   if (ev.confidence.key === "medium") return `予報モデルによって ${lo}〜${hi}点 と幅があります`;
   return `予報モデルの見立てが ${lo}〜${hi}点 と大きく割れています。外れることがあります`;
 }
@@ -351,7 +352,8 @@ function render() {
   renderRecords();
   $("footer").innerHTML =
     `${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} 時点の予報。`
-    + `気象庁MSM・ICON・ECMWF・GFS の4モデルの真ん中の値を採り、見立てのばらつきも一緒に出しています。<br>`
+    + `${S.MODELS.length}つの数値予報モデル（${S.MODELS.map((m) => S.MODEL_NAMES[m]).join("・")}）の`
+    + `真ん中の値を採り、見立てのばらつきも一緒に出しています。<br>`
     + `夕焼け・朝焼けは、頭上だけでなく日の入り方向 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° の空の雲も見ています。<br>`
     + `<strong>これは予報です。</strong>実際の空とは違うことがあります。見に行くかどうかの目安としてお使いください。<br>`
     + `予報: Open-Meteo ／ 実況: 気象庁アメダス ／ 光害: <a href="https://djlorenz.github.io/astronomy/lp/">Lorenz Light Pollution Atlas 2025</a>（VIIRS） ／ 検索: OSM Nominatim ・ 国土地理院`;
@@ -494,7 +496,7 @@ function renderDetail(id, sel, now, opts = {}) {
     <div class="tiny" style="margin-bottom:8px">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div>
     <div class="section-h"><h2>この点数のわけ</h2><span class="tiny">基準 ${Math.round(ev.base)} → ${Math.round(ev.score)}</span></div>
     <div class="factors">${factors}</div>
-    <div class="section-h" style="margin-top:8px"><h2>4つの予報モデルの見立て</h2></div>${perModel}
+    <div class="section-h" style="margin-top:8px"><h2>予報モデルごとの見立て</h2></div>${perModel}
     ${record}
   </div>`;
 }
