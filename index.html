@@ -33,9 +33,12 @@
     h1 { text-align: left; padding-left: 2px; }
     .panes { display: grid; grid-template-columns: minmax(320px, 360px) 1fr;
              gap: 16px; align-items: start; }
-    .pane-right { position: sticky; top: 12px; }
-    /* 記録は幅を使ったほうが読みやすいので下段に横断で置く */
-    #records { grid-column: 1 / -1; }
+    /* 右ペインを position:sticky にしない。
+       詳細は左の一覧より背が高くなることが多く（実測 1505px vs 755px）、
+       sticky の包含ブロックは .panes 全体なので、スクロールすると右ペインが
+       下へ滑って記録カードに重なる（実際に週間の行が記録の上に描画されていた）。
+       さらに要素がビューポートより高いと下端が読めなくなる。
+       利点が小さく副作用が大きいので、通常の流れに戻す。 */
     /* 広い側では数値表が収まるので横スクロールを出さない */
     .pane-right .scrollx { overflow-x: visible; }
     .pane-right table.numbers { width: 100%; }
@@ -57,6 +60,16 @@
   .ens-bar > div { width: 100%; border-radius: 2px; min-height: 1px; }
   .ens-axis { display: flex; justify-content: space-between; font-size: 0.72rem;
               color: var(--muted); margin-bottom: 4px; }
+  /* 小さな操作の当たり判定を広げる。見た目は変えず、押しやすさだけ上げる。
+     ☆ は 16×24px しかなく、隣の地点ボタンを誤爆しやすかった。 */
+  .tap { position: relative; }
+  .tap::after { content: ""; position: absolute; left: 50%; top: 50%;
+                transform: translate(-50%, -50%);
+                width: max(100%, 44px); height: 44px; }
+  /* ☆ は地点名のすぐ右にある。左右対称に広げると名前の末尾を奪うので、
+     空いている右側と上下だけへ伸ばす。 */
+  #favToggle::after { left: auto; right: -20px; transform: translateY(-50%);
+                      width: 40px; }
   .scorebar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .scorebar > div { height: 100%; border-radius: 4px; }
 
@@ -151,17 +164,17 @@
   <div class="card" id="list"></div>
    </div>
    <div class="pane-right" id="detailPane" hidden></div>
+  </div>
 
   <div class="card" id="records">
     <div class="section-h"><h2>記録</h2>
       <span><span class="muted" id="recCount"></span>
-        <button id="exportBtn" class="muted" style="margin-left:8px">書き出し</button>
-        <button id="importBtn" class="muted" style="margin-left:6px">読み込み</button>
+        <button id="exportBtn" class="muted tap" style="margin-left:8px">書き出し</button>
+        <button id="importBtn" class="muted tap" style="margin-left:6px">読み込み</button>
         <input type="file" id="importFile" accept=".json" hidden></span></div>
     <div class="bins" id="bins"></div>
     <p class="tiny" style="margin-top:6px">横棒が実際に見えた割合、縦線が点数どおりならこうなるはずという水準です。棒が線より短ければ点数が甘く、長ければ辛いということ。記録が無い帯は「—」と出します。</p>
     <div id="recList"></div>
-  </div>
   </div>
 
   <p class="tiny" id="footer"></p>
@@ -182,8 +195,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826120300"></script>
-<script src="sorami-core.js?v=20260826120300"></script>
+<script src="spots.js?v=20260826123715"></script>
+<script src="sorami-core.js?v=20260826123715"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -260,6 +273,13 @@ function renderEnsemble(ev) {
       <strong>動きうる幅を測るためだけ</strong>に使っています
       （太陽の方向の空を見ていないので、点数の高さ自体は比べられません）。</p>`;
 }
+// 「次の見どころ」は 36 時間以内の最高スコアを出すだけなので、
+// 全部だめな日でも 29 点の「不向き」がそこに載る（実データで確認）。
+// 見どころと呼べない日に見どころと書かない。
+const HIGHLIGHT_HEAD = {
+  spectacular: "次の見どころ", good: "次の見どころ",
+  fair: "いちばん期待できるもの", poor: "めぼしい空はなさそうです",
+};
 const CONF_ICON = { high: "◎", medium: "△", low: "⚠︎" };
 
 // ---------------------------------------------------------------- 永続化（localStorage）
@@ -357,7 +377,7 @@ function render() {
     $("highlight").hidden = false;
     $("highlight").style.borderColor = color;
     $("highlight").innerHTML = `
-      <div class="muted" style="margin-bottom:6px">次の見どころ</div>
+      <div class="muted" style="margin-bottom:6px">${HIGHLIGHT_HEAD[ev.rank.key]}</div>
       <div style="display:flex;align-items:center;gap:12px">
         <span style="font-size:1.9rem">${S.PHENOMENA[best.id].icon}</span>
         <span style="flex:1"><strong style="font-size:1.19rem">${S.PHENOMENA[best.id].name}</strong>
@@ -369,16 +389,30 @@ function render() {
       <div style="font-size:0.94rem;margin-bottom:4px">${esc(S.phrasing(best.id, ev.rank).say)}</div>
       <div class="tiny">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div>`;
     $("highlight").onclick = () => {
+      // 2ペインのときは <details> が無い（一覧は data-pick のボタン）。
+      // details だけを探していたため、PC では押しても何も起きていなかった。
+      if (WIDE.matches) { picked = best.id; render(); $("detailPane").scrollIntoView({ behavior: "smooth", block: "start" }); return; }
       const el = document.querySelector(`details[data-id="${best.id}"]`);
       if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth" }); }
     };
   } else $("highlight").hidden = true;
 
-  // 一覧: 評価できるものが先、直近に起きる順
+  // 一覧の並び: 評価できるものが先 → 時刻が決まっているものが先 → 直近に起きる順。
+  //
+  // 「時刻が決まっているか」を挟むのが要点。虹は雨の時間を特定できない日でも
+  // 窓の開始時刻を持っており、それで並べると朝の早い時刻として先頭に来る。
+  // 実際に 2点「期待薄」の虹が 84点の夕焼けより上に出ていた。
+  // 画面ではその時刻を表示しない（specificTime === false）のに、
+  // 表示しない時刻で並べていたことになる。
   const order = Object.keys(weeks).sort((a, b) => {
     const ua = upcoming(weeks[a], now), ub = upcoming(weeks[b], now);
     const aOk = ua && !ua.evaluation.unavailable, bOk = ub && !ub.evaluation.unavailable;
     if (aOk !== bOk) return aOk ? -1 : 1;
+    if (aOk) {
+      const aTimed = ua.evaluation.specificTime !== false;
+      const bTimed = ub.evaluation.specificTime !== false;
+      if (aTimed !== bTimed) return aTimed ? -1 : 1;
+    }
     const pa = aOk ? ua.evaluation.peak : Infinity, pb = bOk ? ub.evaluation.peak : Infinity;
     if (pa !== pb) return pa - pb;
     return S.PHENOMENA[a].order - S.PHENOMENA[b].order;
@@ -765,7 +799,7 @@ $("searchBox").addEventListener("keydown", async (e) => {
 
 // 選択中の地点をお気に入りへ（地点名タップ長押し代わりに ☆ を出す）
 $("placeName").insertAdjacentHTML("afterend",
-  ` <button id="favToggle" style="font-size:1rem;vertical-align:2px"></button>`);
+  ` <button id="favToggle" class="tap" style="font-size:1rem;vertical-align:2px"></button>`);
 function renderFavToggle() {
   const isFav = favorites.some((f) => f.id === place.id);
   $("favToggle").textContent = isFav ? "★" : "☆";
