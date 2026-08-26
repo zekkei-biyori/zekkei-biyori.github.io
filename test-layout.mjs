@@ -34,7 +34,7 @@ ok(/<button class="na" data-pick=/.test(html), "対象外の行も押せる");
 const pickFn = html.slice(html.indexOf("function pick(id, now, dayMs)"),
                           html.indexOf("function pick(id, now, dayMs)") + 400);
 ok(/upcoming\(weeks\[id\], now\)/.test(pickFn), "日を指定しなければ直近の回に合わせる");
-ok(/dayMs !== undefined \? dayMs/.test(pickFn), "日を指定したときはその日を使う");
+ok(/dayMs !== undefined && dayMs !== null \? dayMs/.test(pickFn), "日を指定したときはその日を使う");
 // セル幅は 375px 端末で 27px しかなく、評価の言葉を入れると3行に折り返して読めなかった。
 ok(!/class="r" style="color:\$\{color\}">\$\{esc\(S\.phrasing/.test(html),
   "セルに評価の言葉を入れていない（折り返して読めなくなる）");
@@ -50,21 +50,34 @@ ok(/function renderVerdict/.test(html) && /±\$\{err\}/.test(html),
   "点数に誤差が並記されている");
 ok(/class="band"/.test(html), "バーに動きうる幅の帯がある");
 
-console.log("== 見たいものを選ぶプルダウン ==");
-ok(/id="picker"/.test(html), "#picker がある");
-ok(/id="phSelect"/.test(html), "現象を選ぶ select がある");
-ok(html.indexOf('id="picker"') < html.indexOf('id="matrix"'), "プルダウンが表より前にある");
-ok(/function renderPicker/.test(html), "renderPicker がある");
-// 推薦と選択は別物。選択が推薦から外れたら、推薦へ戻る導線を残す。
-ok(/id="backToBest"/.test(html), "いちばんの狙いめへ戻る導線がある");
-// block:"start" だと詳細が上端に来てプルダウンも表も視界から消える。
-ok(!/scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/.test(html),
-  "詳細へ飛ぶときに画面上端へ寄せない（選び直せなくなる）");
+console.log("== 一覧と詳細は別画面 ==");
+// 同じページにスクロールで並べていたが、表と詳細が混ざって読みにくかった。
+ok(/id="listView"/.test(html) && /id="detailView"/.test(html), "2つの画面がある");
+ok(/function routeFromHash/.test(html), "URLのハッシュで場所を持つ（戻るが効く）");
+ok(/addEventListener\("hashchange"/.test(html), "hashchange を見ている");
+ok(/id="backBtn"/.test(html), "詳細に戻るボタンがある");
+ok(/\$\("records"\)\.hidden = inDetail/.test(html), "詳細を読むときに記録を挟まない");
+ok(/listScrollY/.test(html), "一覧へ戻ったとき元の位置に戻す");
+// 詳細の中で現象を替えるたびに履歴を積むと、戻るのに何度も押させることになる。
+ok(/location\.replace/.test(html), "詳細内の切り替えは履歴を積まない");
 
-console.log("== 同じ内容を二度出さない ==");
-const picker = html.slice(html.indexOf("function renderPicker"), html.indexOf("// この先7日"));
-ok(!/renderScoreBar/.test(picker), "プルダウンにスコアバーを二重に出していない");
-ok(!/renderVerdict/.test(picker), "プルダウンに点数カードを二重に出していない");
+console.log("== 詳細の見出しがそのまま現象の選択 ==");
+ok(/id="phSelect"/.test(html), "現象を選ぶ select がある");
+ok(/function renderPhenomenonSelect/.test(html), "renderPhenomenonSelect がある");
+ok(/id="backToBest"/.test(html), "いちばんの狙いめへ戻る導線がある");
+// 390px では select 約220px ＋「よく染まる」約130px が1行に収まらず重なった。
+const headBlock = html.slice(html.indexOf('const head = `<div class="card highlight"'),
+                             html.indexOf('const head = `<div class="card highlight"') + 400);
+ok(/head-row/.test(headBlock) && headBlock.indexOf("renderPhenomenonSelect") < headBlock.indexOf("head-row"),
+  "プルダウンと評価を同じ行に並べない（重なる）");
+ok(/\.verdict-box \{[^}]*flex: none/.test(html), "評価の箱が縮まない");
+
+console.log("== 日を指定しないURLは直近の回を指す ==");
+ok(/delete selectedDay\[route\.id\]/.test(html),
+  "#/sunset を開いたら前に見ていた日を持ち越さない");
+// 同じ夕焼けでも2日先を見ているなら、推薦しているのは今日のほう。
+ok(/best\.id === id && best\.u\.dayMs === dayMs/.test(html),
+  "「次の見どころ」は現象と日の両方が一致したときだけ");
 
 console.log("== 記録は0件のとき畳む ==");
 ok(/id="recEmpty"/.test(html) && /id="recBody"/.test(html), "空表示と本体が分かれている");
@@ -86,6 +99,10 @@ ok(!/\.peak/.test(sortBlock), "並びが発生時刻に依存していない");
 ok(/PHENOMENA\[a\]\.order - S\.PHENOMENA\[b\]\.order/.test(sortBlock), "固定順を使っている");
 ok(/unavailable/.test(sortBlock), "対象外は最後へ回す");
 
+console.log("== 長い名前が3行に割れない ==");
+ok(/word-break: keep-all/.test(html), "表の行ラベルは空白でだけ折り返す");
+ok(/meta\.short \|\| meta\.name/.test(html), "長い名前は短縮名を使う");
+
 console.log("== 現象の並びが一日の流れに沿う ==");
 const core = fs.readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8");
 const orderOf = (key) => {
@@ -98,6 +115,8 @@ ok(got.every((v, i) => v === i),
   "朝焼け→雲海→霧氷→ダイヤモンドダスト→虹→夕焼け→星空 の順",
   got.join(","));
 ok(orderOf("sunrise") < orderOf("sunset"), "朝焼けが夕焼けより先");
+ok(/short: "\u30c0\u30a4\u30e4\u30e2\u30f3\u30c9 \u30c0\u30b9\u30c8"/.test(core),
+  "ダイヤモンドダストの短縮名がある");
 
 console.log(`\n${fail === 0 ? "LAYOUT OK" : "FAILED"} — ${pass} 件成功 / ${fail} 件失敗`);
 process.exit(fail === 0 ? 0 : 1);
