@@ -27,7 +27,10 @@ ok(/function renderPhenomenonCards/.test(html), "現象ごとのカードを描�
 ok(/id="cards"/.test(html), "#cards がある");
 // 色や数字を覚えなくても、どの日がいいかが棒の高さで分かる。
 ok(/30 \* ev\.score \/ 100/.test(html), "日の良し悪しを棒の高さで示す");
-ok(/class="day\$\{isNext\}" data-cell=/.test(html), "日がボタンになっている");
+ok(/class="day\$\{isNext\}\$\{isPast\}" data-cell=/.test(html), "日がボタンになっている");
+// 20時に「今日の夕焼け 79点」がいちばん高い棒として左端に出ていた。
+ok(/\.day\.past \{[^}]*opacity/.test(html), "終わった回は薄くする");
+ok(/isPast = ev\.window\[1\] <= now/.test(html), "終わったかどうかを窓の終わりで判定する");
 
 console.log("== 押せるものだけが押せる見た目 ==");
 // 情報カードごと押せると、読んでいるつもりの場所で画面が変わる。
@@ -99,6 +102,11 @@ const sortBlock = html.slice(html.indexOf("const order = Object.keys(weeks).sort
 ok(!/\.peak/.test(sortBlock), "並びが発生時刻に依存していない");
 ok(/PHENOMENA\[a\]\.order - S\.PHENOMENA\[b\]\.order/.test(sortBlock), "固定順を使っている");
 ok(/unavailable/.test(sortBlock), "対象外は最後へ回す");
+
+console.log("== 画面をまたいで現象の並びが揃う ==");
+// spots.js の出現順のままだと、一覧のカードと地点シートのチップで順序が違った。
+ok(/phenomenaWithSpots[\s\S]{0,160}PHENOMENA\[a\]\.order/.test(html),
+  "スポットの絞り込みも同じ並び順");
 
 console.log("== 現象の並びが似たもの同士で隣り合う ==");
 const core = fs.readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8");

@@ -335,6 +335,15 @@
       // 厳密な大気透過モデルではなく目安（比 5% で 0、35% 以上で満点となる傾斜）。
       // 雨の1時間平均に直達が残っている＝セルの合間に日が差す（にわか雨型）ことの代理。
       clearSkyDirectMax: 900, sunlightFitLo: 0.05, sunlightFitHi: 0.35,
+    // 直射日光の絶対量。快晴時比だけで見ていたため、太陽高度 1°（快晴でも
+    // 15W/m² 程度）のときに 12W/m² で満点が付いていた。
+    // 日没間際の「赤い虹」は実在するので一律に切らず、量に応じて弱める。
+    directLo: 10, directHi: 100,
+    // 日が差していなければ虹は出ない。0W/m² で 75点「良好」が出ていた。
+    noSunDirect: 3, noSunCeiling: 25,
+    // 日射を返さないモデルがある（気象庁GSMは全時刻、MSM・英国気象局・ARPEGE は一部）。
+    // その時間は必須条件を確かめられないので、良い方へは丸めない。
+    unverifiedSunCeiling: 50,
       source: "太陽高度≤42°・降水・直射日光から推定。雨域が対日点の方角にあるかはモデル解像度では解けないため参考値",
     },
   };
@@ -629,26 +638,63 @@
   // 利用者にとっても「±10点くらい」のほうが意味が取れるし、
   // ランク幅（絶景85/良好65/平凡40＝20〜25点間隔）と直接比べられる。
   //
-  // 変換: 正規分布なら IQR = 1.349σ、平均絶対誤差 = √(2/π)σ = 0.7979σ。
-  //       よって 予測誤差 ≒ IQR × 0.7979 / 1.349 = IQR × 0.5915。
+  // 変換: 正規分布なら p90 − p10 = 2.563σ、平均絶対誤差 = √(2/π)σ = 0.7979σ。
+  //       よって 予測誤差 ≒ (p90 − p10) × 0.7979 / 2.563 = (p90 − p10) × 0.3113。
   //
-  // 【この変換は実測で裏が取れている】
-  //   当日のアンサンブル IQR の中央値 15 → 予測誤差 8.9 点。
-  //   実測した当日〜翌日のスコア誤差（10地点×61日＝610標本、ERA5比）は MAE 9.5 点。
-  //   6% 以内で一致する。当日についてはアンサンブルの分散が正しい大きさを指している。
+  // 【四分位範囲では駄目だった】
+  //   降水などで上限に張り付くと、多数のメンバーが同じ点数に積み上がる。
+  //   実測では 294 標本のうち 67 件（23%）で 4 割以上のメンバーが中央値と同値だった。
+  //   そうなると四分位が全部その山の中に入り IQR が 0 になる。
+  //   実例: 51 メンバーが 9〜83 点に散らばっているのに IQR が 0 で「信頼度 高」。
+  //         11 本（22%）は別の評価を指していた。
+  //   p10–p90 なら山の外まで届くので潰れない。
   //
-  // 日数ぶんの下駄は【足さない】。IQR 自身が日数とともに広がる（24.4→43.0）うえ、
+  // 【実測との一致】
+  //   当日〜翌日の予測誤差の中央値 8.7 点。
+  //   実測したスコア誤差（10地点×61日＝610標本、ERA5比）は MAE 9.5 点。
+  //   IQR 版（8.3点）より近い。
+  //
+  // 日数ぶんの下駄は【足さない】。散らばり自身が日数とともに広がるうえ、
   // 当日で較正が合っている量に、測っていない補正を足せばその一致を壊すだけになる。
-  // 数日先のスコア誤差は測れていない（アンサンブルに過去アーカイブが無く、
-  // previous-runs には雲の層別が無い）。測れたら見直す。
-  const IQR_TO_EXPECTED_ERROR = 0.5915;
+  const SPREAD_TO_EXPECTED_ERROR = 0.3113;
   const ENS_HIGH_THRESHOLD = 10;    // ±10点未満ならランクは動かない
   const ENS_MEDIUM_THRESHOLD = 20;  // ランク境界の間隔が20〜25点
-  const confidenceOfEnsemble = (expectedError) => (expectedError < ENS_HIGH_THRESHOLD
-    ? { key: "high", label: "高", caption: "51通りの計算がよく揃っています" }
-    : expectedError < ENS_MEDIUM_THRESHOLD
-      ? { key: "medium", label: "中", caption: "51通りの計算に幅があり、評価が1段変わり得ます" }
-      : { key: "low", label: "低", caption: "51通りの計算が割れています" });
+
+  // 点数の幅が小さくても、評価が割れていることがある。
+  // 上限に張り付いた分布では幅が縮む一方、外れた側は別のランクを指す。
+  // 「評価は動かない」と言う以上、メンバーの多数が同じ評価であることを確かめる。
+  const AGREE_HIGH = 0.7;   // これ未満なら「高」とは言わない
+  const AGREE_LOW = 0.5;    // 表示している評価が少数派なら「低」
+
+  /// 51 メンバーを本体スコアへ重ね直し、同じ評価になる割合を返す。
+  /// メンバーは太陽方位オフセットを持たないぶん絶対値がずれるので、
+  /// 画面のヒストグラムと同じように中央を合わせてから比べる。
+  function rankAgreement(scores, memberMedian, shownScore) {
+    if (!scores || !scores.length) return null;
+    const shift = shownScore - memberMedian;
+    const target = rankOf(shownScore).key;
+    let same = 0;
+    for (const v of scores) {
+      const moved = Curve.clamp(v + shift);
+      if (rankOf(moved).key === target) same++;
+    }
+    return same / scores.length;
+  }
+
+  const confidenceOfEnsemble = (expectedError, agreement) => {
+    let key = expectedError < ENS_HIGH_THRESHOLD ? "high"
+      : expectedError < ENS_MEDIUM_THRESHOLD ? "medium" : "low";
+    let capped = false;
+    if (agreement !== null && agreement !== undefined) {
+      if (agreement < AGREE_LOW) { key = "low"; capped = true; }
+      else if (agreement < AGREE_HIGH && key === "high") { key = "medium"; capped = true; }
+    }
+    const caption = key === "high" ? "51通りの計算がよく揃っています"
+      : key === "medium" ? "51通りの計算に幅があり、評価が1段変わり得ます"
+      : "51通りの計算が割れています";
+    return { key, label: key === "high" ? "高" : key === "medium" ? "中" : "低",
+             caption, cappedByDisagreement: capped };
+  };
 
   function cloudDetail(raw, overcast, heavilyObscured, absent, present) {
     // 空一面かどうかを先に見る。覆い尽くしでも三角カーブは 0 を返すため、
@@ -1039,16 +1085,39 @@
           convective ? "にわか雨。雲の切れ間から日が差しやすく、虹の出やすい降り方です" : "雨粒がなければ虹は出ません"));
 
         // 直射日光。太陽を背にした観測者に日が当たっていることが虹の必須条件。
-        // 晴天時の直達日射の目安（900×sin高度）に対する比で「雨の時間に日が差すか」を見る。
+        //
+        // 見るのは2つ。
+        //   相対 … 晴天時の目安（900×sin高度）に対する比。雲を抜けて日が差しているか
+        //   絶対 … 実際の量。虹を光らせるだけの光があるか
+        // 相対だけで見ていたため、太陽高度 1°（快晴でも 15W/m² 程度）のときに
+        // 12W/m² が「比 0.76」で満点になっていた。両方を満たしたときだけ加点する。
         const direct = series.valueAtIndex("direct_radiation", i);
+        let ceiling = null, ceilingReason = "";
         if (direct !== null) {
           const potential = s.clearSkyDirectMax * Math.sin(sun.elevation * DEG);
-          const fit = potential > 0 ? Curve.ramp(direct / potential, s.sunlightFitLo, s.sunlightFitHi) : 0;
+          const relative = potential > 0 ? Curve.ramp(direct / potential, s.sunlightFitLo, s.sunlightFitHi) : 0;
+          const absolute = Curve.ramp(direct, s.directLo, s.directHi);
+          const fit = Math.min(relative, absolute);
           factors.push(factor(`直射日光 ${Math.round(direct)}W/m²`, fit * s.sunlightBonus,
-            fit > 0.5 ? "雨のあいだも日が差しそうです" : "雨雲に覆われて日が差しにくい状態です"));
+            fit > 0.5 ? "雨のあいだも日が差しそうです"
+              : direct < s.noSunDirect ? "日が差していません。虹は日光が雨粒に当たって初めて見えます"
+              : "日は差しているものの弱く、虹が見えても淡いものになります"));
+          // 日光は虹の【必須条件】。加点として足すだけだと、
+          // 基準20＋太陽高度25＋降水22 で日射がほぼ無くても「良好」に届いてしまう
+          //（12W/m² で 67点になっていた）。上限として効かせる。
+          ceiling = s.noSunCeiling + (100 - s.noSunCeiling) * fit;
+          ceilingReason = direct < s.noSunDirect
+            ? "日が差していないと虹は出ない" : "日差しが弱いと虹も淡い";
+        } else {
+          // 日射の予報が無いモデルでは、虹の必須条件を確かめられない。
+          // 何も足さないだけだと 基準20＋太陽高度25＋降水30＝75 で「良好」に届く。
+          // 確かめられないものを良い方へ丸めない。
+          factors.push(factor("直射日光 —", 0, "このモデルは日射を予報していません"));
+          ceiling = s.unverifiedSunCeiling;
+          ceilingReason = "日が差すか確かめられない";
         }
 
-        const candidate = buildScore(s.base, factors, null, "", [hourStart, hourStart + series.stepMs]);
+        const candidate = buildScore(s.base, factors, ceiling, ceilingReason, [hourStart, hourStart + series.stepMs]);
         if (!best || candidate.score > best.score) best = candidate;
       }
       if (best) return best;
@@ -1171,7 +1240,8 @@
     const histogram = Array(10).fill(0);
     for (const v of scores) histogram[Math.min(9, Math.floor(v / 10))]++;
     return {
-      iqr: q(0.75) - q(0.25), median: q(0.5), members: scores.length,
+      iqr: q(0.75) - q(0.25), p1090: q(0.9) - q(0.1),
+      median: q(0.5), members: scores.length,
       p10: q(0.1), p25: q(0.25), p75: q(0.75), p90: q(0.9), histogram,
       // 画面側で「本体スコアを中心に重ねる」ために生値も渡す。
       // メンバーの絶対値は本体スコアと比べられない（太陽方位オフセットと視程を
@@ -1220,6 +1290,12 @@
     const daysAhead = Math.max(0, Math.round(
       (JstCal.startOfDay(dayMs) - JstCal.startOfDay(Date.now())) / 86400000));
 
+    let representative = evaluated[0];
+    for (const entry of evaluated) {
+      const da = Math.abs(entry[1].score - median), db = Math.abs(representative[1].score - median);
+      if (da < db || (da === db && entry[0] < representative[0])) representative = entry;
+    }
+
     // 信頼度の出どころは2系統。アンサンブルが取れればそちらを優先する。
     // 8 モデルの「見解の割れ」は、モデルの作りの違いも混ざった量で、
     // 大気そのものの予測不確実性ではない。51 メンバーは後者を直接測ったもの。
@@ -1227,13 +1303,12 @@
     const ens = ensembleSpread(scorer, window, bundle, place, bundle.home.grid.elevation);
     const modelWidth = high - low;
     const effectiveWidth = modelWidth + leadTimePenalty(daysAhead);
-    const expectedError = ens ? ens.iqr * IQR_TO_EXPECTED_ERROR : null;
-    const confidence = ens ? confidenceOfEnsemble(expectedError) : confidenceOf(effectiveWidth);
-    let representative = evaluated[0];
-    for (const entry of evaluated) {
-      const da = Math.abs(entry[1].score - median), db = Math.abs(representative[1].score - median);
-      if (da < db || (da === db && entry[0] < representative[0])) representative = entry;
-    }
+    const shown = representative[1].score;
+    const agreement = ens ? rankAgreement(ens.scores, ens.median, shown) : null;
+    const expectedError = ens ? ens.p1090 * SPREAD_TO_EXPECTED_ERROR : null;
+    const confidence = ens
+      ? confidenceOfEnsemble(expectedError, agreement)
+      : confidenceOf(effectiveWidth);
     const displayWindow = representative[1].refinedWindow || window;
     // 虹は「その1時間」を特定できたときだけ時刻に意味がある。
     // 雨の予報がない日に日の出時刻を出すと、いかにもその時刻に出そうに見えてしまう。
@@ -1263,6 +1338,7 @@
         ensembleHistogram: ens ? ens.histogram : null,
         ensembleScores: ens ? ens.scores : null,
         expectedError,                        // 何点ずれそうか。ens が無ければ null
+        agreement,                            // 同じ評価になるメンバーの割合
         fallbackWidth: effectiveWidth,
       },
       source: scorer.source,
@@ -1526,7 +1602,7 @@
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
     rankOf, confidenceOf, confidenceOfEnsemble, phrasing, leadTimePenalty,
     ensembleSpread, fetchEnsemble, ENSEMBLE_VARS, ENSEMBLE_MEMBERS, ENSEMBLE_MODEL,
-    IQR_TO_EXPECTED_ERROR,
+    SPREAD_TO_EXPECTED_ERROR, rankAgreement,
     Amedas, Nowcast, LightPollution,
   };
   global.Sorami = Sorami;

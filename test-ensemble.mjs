@@ -14,12 +14,35 @@ const ok = (cond, label, detail = "") => {
 const near = (a, b, tol = 1e-9) => Math.abs(a - b) <= tol;
 
 console.log("== 予測誤差への変換 ==");
-ok(near(S.IQR_TO_EXPECTED_ERROR, 0.7979 / 1.349, 1e-3),
-  "IQR→平均絶対誤差の係数が √(2/π)/1.349 に一致",
-  `実際 ${S.IQR_TO_EXPECTED_ERROR}`);
-// 実測の裏取り: 当日IQR中央値15 → 8.9点、実測MAE 9.5点（610標本）
-const implied = 15 * S.IQR_TO_EXPECTED_ERROR;
-ok(implied > 8 && implied < 10, "当日のIQR 15 が実測MAE 9.5点と同じ桁を指す", `${implied.toFixed(1)}点`);
+// 正規分布なら p90−p10 = 2.563σ、平均絶対誤差 = √(2/π)σ。
+ok(near(S.SPREAD_TO_EXPECTED_ERROR, 0.7979 / 2.563, 1e-3),
+  "(p90−p10)→平均絶対誤差の係数が √(2/π)/2.563 に一致",
+  `実際 ${S.SPREAD_TO_EXPECTED_ERROR}`);
+// 実測の裏取り: 当日〜翌日の p90−p10 中央値 28 → 8.7点、実測MAE 9.5点（610標本）
+const implied = 28 * S.SPREAD_TO_EXPECTED_ERROR;
+ok(implied > 8 && implied < 10, "当日の散らばりが実測MAE 9.5点と同じ桁を指す", `${implied.toFixed(1)}点`);
+
+console.log("== 四分位範囲が潰れる分布を取りこぼさない ==");
+// 実データ: 降水の上限に 28/51 が張り付き、IQR が 0 なのに 9〜83 点に散らばっていた。
+const degenerate = [9,9,9,11,14,20,20,21,22,23,28,29,
+  ...Array(28).fill(30), 58,58,58,58,58,58,58,58, 70,70,83].sort((a,b)=>a-b);
+const q = (p) => degenerate[Math.round((degenerate.length - 1) * p)];
+ok(q(0.75) - q(0.25) === 0, "この分布では四分位範囲が 0 になる");
+const p1090 = q(0.9) - q(0.1);
+ok(p1090 > 30, "p10–p90 なら潰れない", `${p1090}`);
+ok(p1090 * S.SPREAD_TO_EXPECTED_ERROR > 10, "この分布を「高」にしない",
+  `${(p1090 * S.SPREAD_TO_EXPECTED_ERROR).toFixed(1)}点`);
+
+console.log("== 評価が割れていたら「高」と言わない ==");
+// 点数の幅が小さくても、上限に張り付いた分布では外れた側が別の評価を指す。
+ok(S.confidenceOfEnsemble(5, 0.95).key === "high", "9割超が同じ評価なら 高");
+ok(S.confidenceOfEnsemble(5, 0.6).key === "medium", "7割未満なら 高にしない");
+ok(S.confidenceOfEnsemble(5, 0.6).cappedByDisagreement === true, "頭打ちにした印が付く");
+ok(S.confidenceOfEnsemble(5, 0.4).key === "low", "表示している評価が少数派なら 低");
+ok(S.confidenceOfEnsemble(25, 0.99).key === "low", "幅が広ければ一致していても 低");
+// 重ね直してから比べる（メンバーは太陽方位を持たないぶん絶対値がずれる）
+const shifted = S.rankAgreement([10, 20, 30, 40, 50], 30, 80);
+ok(shifted !== null && shifted > 0, "本体スコアへ重ね直して一致を数える", `${shifted}`);
 
 console.log("== 信頼度の境界 ==");
 ok(S.confidenceOfEnsemble(9.99).key === "high",  "9.99点 → 高");

@@ -108,6 +108,9 @@
   .day .d { font-size: 0.63rem; color: var(--tertiary); line-height: 1.1; text-align: center; }
   /* 次に来る回。どこから見ればいいかの起点を示す。 */
   .day.next { border-color: var(--accent); }
+  /* もう終わった回。押せば記録できるので消しはしないが、目は引かせない。
+     20時に「今日の夕焼け」がいちばん高い棒として左端に出ていた。 */
+  .day.past { opacity: .42; }
 
   .back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
           color: var(--accent); font-size: 0.88rem; padding: 0 2px; margin-bottom: 2px; }
@@ -186,7 +189,8 @@
            width: min(92vw, 480px); max-height: 82vh; padding: 0; }
   dialog::backdrop { background: rgba(0,0,0,.45); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
-  .sheet-body { overflow-y: auto; max-height: calc(82vh - 54px); padding: 0 16px 16px; }
+  .sheet-body { overflow-y: auto; max-height: calc(82vh - 54px); padding: 0 16px 16px;
+                overscroll-behavior: contain; }
   .sheet input[type=search] { width: 100%; font: inherit; padding: 9px 12px; border-radius: 10px;
     border: 1px solid var(--line); background: var(--bg); color: var(--text); }
   .chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; }
@@ -267,8 +271,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826172358"></script>
-<script src="sorami-core.js?v=20260826172358"></script>
+<script src="spots.js?v=20260826193027"></script>
+<script src="sorami-core.js?v=20260826193027"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -292,7 +296,13 @@ function confidenceText(ev) {
     parts.push(e < 1
       ? `${u.ensembleMembers}通りの計算がほぼ一致していて、点数はあまり動きません`
       : `${u.ensembleMembers}通りの計算から、点数は ±${e}点 ほど動く見込みです`);
-    if (ev.confidence.key === "medium") parts.push("評価が1段変わり得ます");
+    // 点数の幅が小さくても評価が割れていることがある（上限に張り付いた分布）。
+    // そのときは幅ではなく「何通りが別の評価か」を言う。数字だけ見て
+    // 安心されるのを避ける。
+    if (ev.confidence.cappedByDisagreement && u.agreement !== null && u.agreement !== undefined) {
+      const other = Math.round(u.ensembleMembers * (1 - u.agreement));
+      parts.push(`ただし ${other}通りは別の評価です`);
+    } else if (ev.confidence.key === "medium") parts.push("評価が1段変わり得ます");
     else if (ev.confidence.key === "low") parts.push("評価はあてになりません");
   } else {
     const lo = Math.round(ev.spread[0]), hi = Math.round(ev.spread[1]);
@@ -623,8 +633,10 @@ function renderPhenomenonCards(order, now) {
       const color = RANK_COLOR[ev.rank.key];
       const h = Math.max(3, Math.round(30 * ev.score / 100));
       const isNext = u && e.dayMs === u.dayMs ? " next" : "";
-      return `<button class="day${isNext}" data-cell="${id}|${e.dayMs}"
-        title="${esc(meta.name)} ${S.JstCal.relativeDay(e.dayMs, now)} ${Math.round(ev.score)}点 ${esc(S.phrasing(id, ev.rank).label)}">
+      // 終わった回は薄くする。押せるままにするのは、見えたかどうかを記録するため。
+      const isPast = ev.window[1] <= now ? " past" : "";
+      return `<button class="day${isNext}${isPast}" data-cell="${id}|${e.dayMs}"
+        title="${esc(meta.name)} ${S.JstCal.relativeDay(e.dayMs, now)} ${Math.round(ev.score)}点 ${esc(S.phrasing(id, ev.rank).label)}${isPast ? "（終了）" : ""}">
         <span class="v" style="color:${color}">${Math.round(ev.score)}</span>
         <span class="col"><i style="height:${h}px;background:${color}"></i></span>
         <span class="d">${label}</span></button>`;
@@ -915,7 +927,10 @@ function renderSheet() {
   };
 
   const filter = window._spotFilter || null;
-  const phenomenaWithSpots = [...new Set(SORAMI_SPOTS.spots.flatMap((s) => s.phenomena))];
+  // 並びは一覧のカードと揃える。spots.js に出てきた順のままだと、
+  // 画面ごとに現象の順序が違って探しにくい。
+  const phenomenaWithSpots = [...new Set(SORAMI_SPOTS.spots.flatMap((s) => s.phenomena))]
+    .sort((a, b) => S.PHENOMENA[a].order - S.PHENOMENA[b].order);
   $("spotChips").innerHTML = `<button class="${!filter ? "on" : ""}" data-chip="">すべて</button>`
     + phenomenaWithSpots.map((p) => `<button class="${filter === p ? "on" : ""}" data-chip="${p}">${S.PHENOMENA[p].name}</button>`).join("");
   for (const el of $("spotChips").querySelectorAll("[data-chip]")) {
