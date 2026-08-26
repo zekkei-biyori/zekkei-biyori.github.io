@@ -26,6 +26,12 @@ ok(html.indexOf('id="matrix"') < html.indexOf('id="detailPane"'),
   "マトリクスが詳細より前にある");
 ok(/data-cell=/.test(html), "セルが押せる（data-cell）");
 ok(/mx-legend/.test(html), "色の凡例がある");
+// 対象外の行（雲海・霧氷・ダイヤモンドダスト）には押せるセルが1つも無い。
+// 名前が押せないと、それらの詳細（週間・理由）へ到達する手段がまったく無くなる。
+ok(/<button class="lbl\$\{on\}" data-pick=/.test(html), "現象名が押せる");
+ok(/<button class="na" data-pick=/.test(html), "対象外の行も押せる");
+const wire = html.slice(html.indexOf('querySelectorAll("[data-pick]")'), html.indexOf('querySelectorAll("[data-pick]")') + 400);
+ok(/upcoming\(weeks\[id\], now\)/.test(wire), "名前を押したら直近の回に合わせる");
 // セル幅は 375px 端末で 27px しかなく、評価の言葉を入れると3行に折り返して読めなかった。
 ok(!/class="r" style="color:\$\{color\}">\$\{esc\(S\.phrasing/.test(html),
   "セルに評価の言葉を入れていない（折り返して読めなくなる）");

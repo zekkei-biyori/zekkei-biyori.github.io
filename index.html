@@ -83,8 +83,11 @@
             line-height: 1.15; padding-bottom: 2px; }
   .mx .hd.today { color: var(--accent); font-weight: 700; }
   .mx .lbl { display: flex; align-items: center; gap: 5px; font-size: 0.75rem;
-             line-height: 1.15; min-width: 0; padding-right: 2px; }
+             line-height: 1.15; min-width: 0; padding: 2px 4px 2px 2px; text-align: left;
+             border-radius: 7px; width: 100%; }
   .mx .lbl .i { font-size: 0.94rem; flex: none; }
+  .mx .lbl.on { background: color-mix(in srgb, var(--text) 10%, transparent); font-weight: 700; }
+  @media (hover: hover) { .mx .lbl:hover, .mx .na:hover { background: color-mix(in srgb, var(--text) 7%, transparent); } }
   .mx .cell { border-radius: 7px; height: 34px; display: flex;
               align-items: center; justify-content: center; line-height: 1;
               border: 1.5px solid transparent; }
@@ -95,7 +98,8 @@
   .mx-legend .lg i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .mx .cell.sel { border-color: var(--text); }
   .mx .na { grid-column: 2 / -1; display: flex; align-items: center; font-size: 0.69rem;
-            color: var(--tertiary); background: var(--line); border-radius: 7px; padding: 0 9px; }
+            color: var(--tertiary); background: var(--line); border-radius: 7px;
+            padding: 0 9px; width: 100%; text-align: left; min-height: 28px; }
 
   .scorebar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .scorebar > div { height: 100%; border-radius: 4px; }
@@ -218,8 +222,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826153915"></script>
-<script src="sorami-core.js?v=20260826153915"></script>
+<script src="spots.js?v=20260826160554"></script>
+<script src="sorami-core.js?v=20260826160554"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -448,13 +452,25 @@ function render() {
 
   $("matrix").innerHTML = renderMatrix(order, now);
   $("detailPane").innerHTML = renderDetailPane(picked, now);
+  const showDetail = () => $("detailPane").scrollIntoView({ behavior: "smooth", block: "start" });
   for (const el of $("matrix").querySelectorAll("[data-cell]")) {
     el.onclick = () => {
       const [id, dayMs] = el.dataset.cell.split("|");
       picked = id;
       selectedDay[id] = +dayMs;
       render();
-      $("detailPane").scrollIntoView({ behavior: "smooth", block: "start" });
+      showDetail();
+    };
+  }
+  // 現象名を押したときは日付を指定していないので、直近の回に合わせる。
+  for (const el of $("matrix").querySelectorAll("[data-pick]")) {
+    el.onclick = () => {
+      const id = el.dataset.pick;
+      picked = id;
+      const u = upcoming(weeks[id], now);
+      if (u) selectedDay[id] = u.dayMs;
+      render();
+      showDetail();
     };
   }
 
@@ -506,11 +522,15 @@ function renderMatrix(order, now) {
     const entries = weeks[id];
     const meta = S.PHENOMENA[id];
     if (!entries || !entries.length) return "";
-    const label = `<div class="lbl"><span class="i">${meta.icon}</span><span>${meta.name}</span></div>`;
+    const on = id === picked ? " on" : "";
+    const label = `<button class="lbl${on}" data-pick="${id}">
+      <span class="i">${meta.icon}</span><span>${meta.name}</span></button>`;
     // 7日すべて対象外なら、空のセルを7個並べるより理由を1行書いたほうが伝わる。
+    // ただしその行には押せるセルが無くなるので、名前のほうを押せるようにしてある
+    // （そうしないと雲海・霧氷・ダイヤモンドダストの詳細へ到達できない）。
     const allOut = entries.every((e) => e.evaluation.unavailable);
     if (allOut) {
-      return label + `<div class="na">${esc(entries[0].evaluation.unavailable.message)}</div>`;
+      return label + `<button class="na" data-pick="${id}">${esc(entries[0].evaluation.unavailable.message)}</button>`;
     }
     return label + entries.map((e) => {
       const ev = e.evaluation;
