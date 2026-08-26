@@ -51,6 +51,12 @@
   .place-row .name { font-size: 1.25rem; font-weight: 700; }
   .place-row .chev { margin-left: auto; color: var(--secondary); }
 
+  .ens { display: flex; align-items: flex-end; gap: 2px; height: 44px; margin: 4px 0 2px; }
+  .ens-bar { flex: 1; display: flex; align-items: flex-end; height: 100%;
+             background: var(--line); border-radius: 2px; overflow: hidden; }
+  .ens-bar > div { width: 100%; border-radius: 2px; min-height: 1px; }
+  .ens-axis { display: flex; justify-content: space-between; font-size: 0.72rem;
+              color: var(--muted); margin-bottom: 4px; }
   .scorebar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .scorebar > div { height: 100%; border-radius: 4px; }
 
@@ -176,8 +182,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=202608251859"></script>
-<script src="sorami-core.js?v=202608251859"></script>
+<script src="spots.js?v=20260826120300"></script>
+<script src="sorami-core.js?v=20260826120300"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -186,24 +192,73 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const RANK_COLOR = { spectacular: "var(--spectacular)", good: "var(--good)", fair: "var(--fair)", poor: "var(--poor)" };
 
 // 「信頼度中 62–85」だけでは何のことか伝わらない。
-// 4つの予報モデルの見立てがどれだけ揃っているかを、そのまま言葉にする。
+// 何が・どれだけ・なぜ不確かなのかを、そのまま言葉にする。
+//
+// 出どころは2系統。アンサンブル（51通りの計算）が取れていれば
+// 「スコアが何点ずれそうか」まで言える。取れなければモデルの割れ方で代用する。
 function confidenceText(ev) {
-  const lo = Math.round(ev.spread[0]), hi = Math.round(ev.spread[1]);
-  const n = Object.keys(ev.perModel).length;
+  const u = ev.uncertainty;
   const d = ev.daysAhead || 0;
-  // 信頼度が低い理由は2つあり、利用者にとって意味が違う。
-  //   モデルが割れている → 天気が読みにくい日
-  //   先の予報だから     → 日が近づけば分かる
-  // どちらなのかを言い分ける。
-  const spreadWide = hi - lo >= 30;
   const parts = [];
-  if (ev.confidence.key === "high") parts.push(`${n}つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`);
-  else if (spreadWide) parts.push(`予報モデルの見立てが ${lo}〜${hi}点 と割れています`);
-  else parts.push(`予報モデルは ${lo}〜${hi}点 でおおむね揃っています`);
 
-  if (d >= 5) parts.push(`${d}日先の予報は当たりにくいので、日が近づいたら見直してください`);
-  else if (d >= 2) parts.push(`${d}日先なので、当日の予報より外れやすくなります`);
+  if (u && u.basis === "ensemble") {
+    const e = Math.round(u.expectedError);
+    // 「±0点」は精度の主張として強すぎる。1点未満はまとめて「ほぼ動きません」。
+    parts.push(e < 1
+      ? `${u.ensembleMembers}通りの計算がほぼ一致していて、点数はあまり動きません`
+      : `${u.ensembleMembers}通りの計算から、点数は ±${e}点 ほど動く見込みです`);
+    if (ev.confidence.key === "medium") parts.push("評価が1段変わり得ます");
+    else if (ev.confidence.key === "low") parts.push("評価はあてになりません");
+  } else {
+    const lo = Math.round(ev.spread[0]), hi = Math.round(ev.spread[1]);
+    const n = Object.keys(ev.perModel).length;
+    const spreadWide = hi - lo >= 30;
+    if (ev.confidence.key === "high") parts.push(`${n}つの予報モデルがほぼ同じ見立てです（${lo}〜${hi}点）`);
+    else if (spreadWide) parts.push(`予報モデルの見立てが ${lo}〜${hi}点 と割れています`);
+    else parts.push(`予報モデルは ${lo}〜${hi}点 でおおむね揃っています`);
+  }
+
+  // 日数の注意は残す。アンサンブルのばらつきは日数とともに広がるが、
+  // 数日先のスコア誤差そのものは検証できていないため、言葉で補う。
+  if (d >= 5) parts.push(`${d}日先なので、日が近づいたら見直してください`);
+  else if (d >= 2) parts.push(`${d}日先の予報です`);
   return parts.join("。");
+}
+// 51メンバーの散らばりを見せる。「信頼度 中」と言われるより、
+// 51本がどう散らばっているかを見たほうが、利用者は自分で判断できる。
+//
+// ただしメンバーの【絶対値は本体スコアと比べられない】。メンバー側は
+// 太陽方位オフセットも視程も持たず、ECMWF 単独で計算しているため、
+// 実データで本体スコアと最大 31 点ずれる。並べて出すと
+// 「どっちが本当なの」という答えられない問いを生む。
+// そこで本体スコアを中心に重ね直し、【散らばりの形だけ】を見せる。
+function renderEnsemble(ev) {
+  const u = ev.uncertainty;
+  if (!u || u.basis !== "ensemble" || !u.ensembleScores) return "";
+  const shift = ev.score - u.ensembleMedian;
+  const shifted = u.ensembleScores.map((v) => Math.round(Math.max(0, Math.min(100, v + shift))));
+  const hist = Array(10).fill(0);
+  for (const v of shifted) hist[Math.min(9, Math.floor(v / 10))]++;
+  const peak = Math.max(...hist, 1);
+  const sorted = [...shifted].sort((a, b) => a - b);
+  const q = (p) => sorted[Math.round((sorted.length - 1) * p)];
+  const lo = q(0.1), hi = q(0.9), q1 = q(0.25), q3 = q(0.75);
+  const bars = hist.map((c, i) => {
+    const mid = i * 10 + 5, inBand = mid >= q1 && mid <= q3;
+    return `<div class="ens-bar" title="${i * 10}〜${i * 10 + 9}点: ${c}通り">
+      <div style="height:${Math.round(100 * c / peak)}%;background:${inBand ? RANK_COLOR[S.rankOf(mid).key] : "var(--line)"}"></div></div>`;
+  }).join("");
+  const ranks = [...new Set(shifted.map((v) => S.rankOf(v).label))];
+  return `<div class="section-h" style="margin-top:8px"><h2>この点数はどれくらい動きうるか</h2></div>
+    <div class="ens">${bars}</div>
+    <div class="ens-axis"><span>0</span><span>50</span><span>100</span></div>
+    <p class="tiny">ECMWF が初期値をわずかに変えて計算した${u.ensembleMembers}通りの散らばりを、
+      この点数（${Math.round(ev.score)}点）を中心に重ねたものです。
+      色が付いているのが真ん中の半分（${q1}〜${q3}点）、上下1割を除くと ${lo}〜${hi}点。
+      ${ranks.length > 1 ? `評価としては<strong>${ranks.join("・")}</strong>のいずれもあり得ます。` : `評価は<strong>${ranks[0]}</strong>で動きません。`}</p>
+    <p class="tiny">点数そのものは8つの予報モデルの中央値です。この${u.ensembleMembers}通りは
+      <strong>動きうる幅を測るためだけ</strong>に使っています
+      （太陽の方向の空を見ていないので、点数の高さ自体は比べられません）。</p>`;
 }
 const CONF_ICON = { high: "◎", medium: "△", low: "⚠︎" };
 
@@ -364,7 +419,12 @@ function render() {
   $("footer").innerHTML =
     `${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} 時点の予報。`
     + `${S.MODELS.length}つの数値予報モデル（${S.MODELS.map((m) => S.MODEL_NAMES[m]).join("・")}）の`
-    + `真ん中の値を採り、見立てのばらつきも一緒に出しています。<br>`
+    + `真ん中の値を点数にしています。<br>`
+    + (bundle && bundle.ensemble
+        ? `点数がどれくらい動きうるかは、ECMWF が初期値をわずかに変えて計算した`
+          + `${bundle.ensemble.members.length}通り（アンサンブル予報）の散らばりから出しています。<br>`
+        : `${bundle ? "アンサンブル予報が取れなかったため、" : ""}`
+          + `点数の確からしさはモデル間の見解の差から出しています。<br>`)
     + `夕焼け・朝焼けは、頭上だけでなく日の入り方向 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° の空の雲も見ています。<br>`
     + `<strong>これは予報です。</strong>実際の空とは違うことがあります。見に行くかどうかの目安としてお使いください。<br>`
     + `予報: Open-Meteo ／ 実況: 気象庁アメダス ／ 光害: <a href="https://djlorenz.github.io/astronomy/lp/">Lorenz Light Pollution Atlas 2025</a>（VIIRS） ／ 検索: OSM Nominatim ・ 国土地理院`;
@@ -508,6 +568,7 @@ function renderDetail(id, sel, now, opts = {}) {
     <div class="section-h"><h2>この点数のわけ</h2><span class="tiny">基準 ${Math.round(ev.base)} → ${Math.round(ev.score)}</span></div>
     <div class="factors">${factors}</div>
     <div class="section-h" style="margin-top:8px"><h2>予報モデルごとの見立て</h2></div>${perModel}
+    ${renderEnsemble(ev)}
     ${record}
   </div>`;
 }

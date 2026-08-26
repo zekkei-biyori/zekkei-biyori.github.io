@@ -406,6 +406,27 @@
   // 出典: A New Twilight Sky Color Prediction Model Based on Machine Learning Methods,
   //       J. Appl. Meteor. Climatol. 65(5), 2026. doi:10.1175/JAMC-D-25-0206.1
   const AIR_VARS = ["aerosol_optical_depth", "dust"];
+
+  // ECMWF アンサンブル（51メンバー）。初期値を摂動させた 51 通りの計算で、
+  // 大気そのものの予測不確実性を測ったもの。8 モデルの「見解の割れ」とは別物。
+  //
+  // 使うのは【信頼度のみ】。スコアの本体は 8 モデルの中央値のままにしてある。
+  // アンサンブル中央値は 8 モデル中央値より平均 13.2 点低く出る（偏り −9.4、
+  // 53% が 10 点以上ずれる。20地点×7日=140標本で実測）が、アンサンブルAPIには
+  // 過去アーカイブが無く（start_date も previous_dayN も全 null を返すことを実測確認）、
+  // ERA5 と突き合わせて【どちらが正しいか判定できない】。
+  // 検証できないものでスコアを動かさない。8/22 の失敗と同じ轍を踏まないため。
+  //
+  // ばらつきは幅（max−min）ではなく四分位範囲（IQR）を使う。51 本の max−min は
+  // 外れメンバー 2 本で決まってしまい、8 本の幅とも比較できない（標本数依存）。
+  const ENSEMBLE_MODEL = "ecmwf_ifs025";
+  const ENSEMBLE_MEMBERS = 51;
+  // visibility はアンサンブルでは全 null（実測確認済み）。freezing_level_height も同様。
+  const ENSEMBLE_VARS = [
+    "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
+    "precipitation", "temperature_2m", "relative_humidity_2m",
+    "wind_speed_10m", "direct_radiation",
+  ];
   // 特許 US10459119 の可視距離式 d[mile] = 1.32 × √(高度[ft]) → km。
   const CLOUD_LAYERS = [
     { key: "low", altitudeFt: 6000, variable: "cloud_cover_low" },
@@ -471,6 +492,35 @@
     } catch { return null; }
   }
 
+  /// 51 メンバーのアンサンブル。取れなくても致命的ではない（信頼度が
+  /// 従来の「8モデルの幅＋日数の下駄」へ落ちるだけ）ので、失敗したら null を返す。
+  async function fetchEnsemble(lat, lon, days) {
+    const p = new URLSearchParams({
+      latitude: lat.toFixed(4), longitude: lon.toFixed(4),
+      hourly: ENSEMBLE_VARS.join(","), models: ENSEMBLE_MODEL,
+      timezone: "auto", timeformat: "unixtime", forecast_days: String(days),
+      past_days: "1",   // 雲海が前日の最高気温を読む。無いと当日ぶんが全メンバー欠測になる
+      // 3 時間値にすると転送量は 350KB→135KB に減るが、IQR の相関が 0.515・
+      // 平均絶対差 8.6 点まで崩れる（10地点×7日で実測）。閾値の間隔と同じ大きさなので使えない。
+    });
+    try {
+      const raw = await fetchJSON(`https://ensemble-api.open-meteo.com/v1/ensemble?${p}`);
+      const times = raw.hourly.time.map((t) => t * 1000);
+      const out = [];
+      for (let i = 0; i < ENSEMBLE_MEMBERS; i++) {
+        // 無印キーはコントロールラン（中央値ではない。実測で中央値50に対し19だった）。
+        const suffix = i === 0 ? "" : `_member${String(i).padStart(2, "0")}`;
+        const columns = {};
+        for (const v of ENSEMBLE_VARS) {
+          const c = raw.hourly[`${v}${suffix}`];
+          if (c && c.some((x) => x !== null)) columns[v] = c;
+        }
+        if (Object.keys(columns).length) out.push(new Series(times, columns));
+      }
+      return out.length >= 10 ? { members: out, elevation: raw.elevation } : null;
+    } catch { return null; }
+  }
+
   async function fetchForecast(lat, lon, days = 8) {
     const now = Date.now();
     const sunsetAt = Sun.eventTime("sunset", now, lat, lon);
@@ -479,11 +529,12 @@
     const sunriseBearing = sunriseAt ? Sun.position(sunriseAt, lat, lon).azimuth : 90;
     const offsetsFor = (bearing) => CLOUD_LAYERS.map((l) => Geo.destination(lat, lon, bearing, l.offsetKm));
 
-    const [homeRaw, sunsetRaw, sunriseRaw, air] = await Promise.all([
+    const [homeRaw, sunsetRaw, sunriseRaw, air, ensemble] = await Promise.all([
       fetchJSON(buildURL([{ latitude: lat, longitude: lon }], HOME_VARS, days, 1)),
       fetchJSON(buildURL(offsetsFor(sunsetBearing), OFFSET_VARS, days, 0)),
       fetchJSON(buildURL(offsetsFor(sunriseBearing), OFFSET_VARS, days, 0)),
       fetchAir(lat, lon, days),
+      fetchEnsemble(lat, lon, days),
     ]);
     const asList = (raw) => (Array.isArray(raw) ? raw : [raw]).map(decodeLocation);
     const toOffsets = (list) => Object.fromEntries(CLOUD_LAYERS.map((l, i) => [l.key, list[i]]));
@@ -492,6 +543,7 @@
       sunsetOffsets: toOffsets(asList(sunsetRaw)),
       sunriseOffsets: toOffsets(asList(sunriseRaw)),
       air,
+      ensemble,
       sunsetBearing, sunriseBearing,
       fetchedAt: now,
     };
@@ -570,6 +622,33 @@
     : width < 55
       ? { key: "medium", label: "中", caption: "モデルの見解に幅があります" }
       : { key: "low", label: "低", caption: "モデルの見解が割れています" });
+
+  // --- アンサンブル（51メンバー）を使うときの信頼度 ---
+  //
+  // 抽象的な「ばらつき幅」ではなく【スコアが何点ずれそうか】へ変換して扱う。
+  // 利用者にとっても「±10点くらい」のほうが意味が取れるし、
+  // ランク幅（絶景85/良好65/平凡40＝20〜25点間隔）と直接比べられる。
+  //
+  // 変換: 正規分布なら IQR = 1.349σ、平均絶対誤差 = √(2/π)σ = 0.7979σ。
+  //       よって 予測誤差 ≒ IQR × 0.7979 / 1.349 = IQR × 0.5915。
+  //
+  // 【この変換は実測で裏が取れている】
+  //   当日のアンサンブル IQR の中央値 15 → 予測誤差 8.9 点。
+  //   実測した当日〜翌日のスコア誤差（10地点×61日＝610標本、ERA5比）は MAE 9.5 点。
+  //   6% 以内で一致する。当日についてはアンサンブルの分散が正しい大きさを指している。
+  //
+  // 日数ぶんの下駄は【足さない】。IQR 自身が日数とともに広がる（24.4→43.0）うえ、
+  // 当日で較正が合っている量に、測っていない補正を足せばその一致を壊すだけになる。
+  // 数日先のスコア誤差は測れていない（アンサンブルに過去アーカイブが無く、
+  // previous-runs には雲の層別が無い）。測れたら見直す。
+  const IQR_TO_EXPECTED_ERROR = 0.5915;
+  const ENS_HIGH_THRESHOLD = 10;    // ±10点未満ならランクは動かない
+  const ENS_MEDIUM_THRESHOLD = 20;  // ランク境界の間隔が20〜25点
+  const confidenceOfEnsemble = (expectedError) => (expectedError < ENS_HIGH_THRESHOLD
+    ? { key: "high", label: "高", caption: "51通りの計算がよく揃っています" }
+    : expectedError < ENS_MEDIUM_THRESHOLD
+      ? { key: "medium", label: "中", caption: "51通りの計算に幅があり、評価が1段変わり得ます" }
+      : { key: "low", label: "低", caption: "51通りの計算が割れています" });
 
   function cloudDetail(raw, overcast, heavilyObscured, absent, present) {
     // 空一面かどうかを先に見る。覆い尽くしでも三角カーブは 0 を返すため、
@@ -1056,6 +1135,41 @@
   // 中央値を採るのは 2026-08-22 18:00 JST の実測（jma_msm 0.0mm vs icon 3.1mm）に基づく。
   // 単一モデルに賭けない。表示スコアと内訳は中央値に最も近い 1 モデル由来で揃える
   // （内訳を平均すると合計が表示スコアと一致せず「なぜこの点数か」が説明できない）。
+  // 51 メンバーを、8 モデルと同じ窓・同じ採点器にかけ、スコアの四分位範囲を返す。
+  // メンバー側は太陽方位オフセットを取っていないので、その加点減点は効かない。
+  // ばらつきの尺度としてのみ使うので支障はない（全メンバーが同条件なため）。
+  function ensembleSpread(scorer, window, bundle, place, elevationFallback) {
+    const ens = bundle.ensemble;
+    if (!ens) return null;
+    const scores = [];
+    for (const member of ens.members) {
+      const r = scorer.score(window, {
+        home: member, offsets: {},
+        lat: place.latitude, lon: place.longitude,
+        terrain: place.terrain || null,
+        elevation: place.elevation ?? ens.elevation ?? elevationFallback,
+        lightPollution: place.lightPollution || null,
+        air: bundle.air || null,
+      });
+      if (!r.unavailable) scores.push(r.score);
+    }
+    // 半数以上のメンバーが採点できないなら、ばらつきの推定として信用しない。
+    if (scores.length < ens.members.length / 2) return null;
+    scores.sort((a, b) => a - b);
+    const q = (p) => scores[Math.round((scores.length - 1) * p)];
+    // 10点刻みのヒストグラム。画面で「51通りがどこに固まっているか」を見せる。
+    const histogram = Array(10).fill(0);
+    for (const v of scores) histogram[Math.min(9, Math.floor(v / 10))]++;
+    return {
+      iqr: q(0.75) - q(0.25), median: q(0.5), members: scores.length,
+      p10: q(0.1), p25: q(0.25), p75: q(0.75), p90: q(0.9), histogram,
+      // 画面側で「本体スコアを中心に重ねる」ために生値も渡す。
+      // メンバーの絶対値は本体スコアと比べられない（太陽方位オフセットと視程を
+      // 持たず、ECMWF 単独のため）。使ってよいのは散らばりの形だけ。
+      scores: scores.map((v) => Math.round(v)),
+    };
+  }
+
   function evaluate(scorerId, dayMs, bundle, place) {
     const scorer = SCORERS[scorerId];
     const offsets = scorerId === "sunrise" ? bundle.sunriseOffsets : bundle.sunsetOffsets;
@@ -1087,7 +1201,7 @@
       const reason = Object.values(results).find((r) => r.unavailable).unavailable;
       return { phenomenon: scorerId, window, peak: peakOf(window), unavailable: reason,
                score: 0, base: 0, factors: [], perModel: {}, spread: [0, 0],
-               confidence: confidenceOf(999), source: scorer.source };
+               confidence: confidenceOf(999), uncertainty: null, source: scorer.source };
     }
     const scores = evaluated.map(([, r]) => r.score);
     const median = Curve.median(scores);
@@ -1095,7 +1209,16 @@
     // 何日先か。先の日ほど、モデルが揃っていても当たらない。
     const daysAhead = Math.max(0, Math.round(
       (JstCal.startOfDay(dayMs) - JstCal.startOfDay(Date.now())) / 86400000));
-    const effectiveWidth = (high - low) + leadTimePenalty(daysAhead);
+
+    // 信頼度の出どころは2系統。アンサンブルが取れればそちらを優先する。
+    // 8 モデルの「見解の割れ」は、モデルの作りの違いも混ざった量で、
+    // 大気そのものの予測不確実性ではない。51 メンバーは後者を直接測ったもの。
+    // 取れなかった場合は従来方式へ落ちる（機能を落として動き続ける）。
+    const ens = ensembleSpread(scorer, window, bundle, place, bundle.home.grid.elevation);
+    const modelWidth = high - low;
+    const effectiveWidth = modelWidth + leadTimePenalty(daysAhead);
+    const expectedError = ens ? ens.iqr * IQR_TO_EXPECTED_ERROR : null;
+    const confidence = ens ? confidenceOfEnsemble(expectedError) : confidenceOf(effectiveWidth);
     let representative = evaluated[0];
     for (const entry of evaluated) {
       const da = Math.abs(entry[1].score - median), db = Math.abs(representative[1].score - median);
@@ -1117,7 +1240,21 @@
       perModel: Object.fromEntries(evaluated.map(([m, r]) => [m, r.score])),
       spread: [low, high],
       daysAhead,
-      confidence: confidenceOf(effectiveWidth),
+      confidence,
+      // 信頼度の根拠を画面へ出すために持ち回す。
+      // 「モデルが割れている」と「51通りが割れている」は利用者にとって意味が違う。
+      uncertainty: {
+        basis: ens ? "ensemble" : "models",
+        modelWidth,
+        ensembleIqr: ens ? ens.iqr : null,
+        ensembleMembers: ens ? ens.members : 0,
+        ensembleMedian: ens ? ens.median : null,
+        ensembleBand: ens ? [ens.p10, ens.p25, ens.p75, ens.p90] : null,
+        ensembleHistogram: ens ? ens.histogram : null,
+        ensembleScores: ens ? ens.scores : null,
+        expectedError,                        // 何点ずれそうか。ens が無ければ null
+        fallbackWidth: effectiveWidth,
+      },
       source: scorer.source,
       rank: rankOf(representative[1].score),
     };
@@ -1377,7 +1514,10 @@
     Geo, JstCal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
     HOME_VARS, OFFSET_VARS, CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
-    rankOf, confidenceOf, phrasing, leadTimePenalty, Amedas, Nowcast, LightPollution,
+    rankOf, confidenceOf, confidenceOfEnsemble, phrasing, leadTimePenalty,
+    ensembleSpread, fetchEnsemble, ENSEMBLE_VARS, ENSEMBLE_MEMBERS, ENSEMBLE_MODEL,
+    IQR_TO_EXPECTED_ERROR,
+    Amedas, Nowcast, LightPollution,
   };
   global.Sorami = Sorami;
   if (typeof module !== "undefined" && module.exports) module.exports = Sorami;
