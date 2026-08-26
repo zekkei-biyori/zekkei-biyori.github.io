@@ -104,6 +104,25 @@
   .scorebar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .scorebar > div { height: 100%; border-radius: 4px; }
 
+  /* 見たいものを選ぶプルダウン。ネイティブの select を使う。
+     iOS ではホイール、Android ではリストと、端末に馴染んだ出方になるし、
+     キーボード操作も読み上げも自前で用意しなくて済む。 */
+  .pick-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sel-wrap { position: relative; display: inline-flex; align-items: center; }
+  .sel-wrap select { appearance: none; -webkit-appearance: none; font: inherit;
+                     font-size: 1.06rem; font-weight: 700; color: var(--text);
+                     background: color-mix(in srgb, var(--text) 8%, transparent);
+                     border: 1px solid var(--line); border-radius: 10px;
+                     padding: 9px 32px 9px 12px; min-height: 44px; cursor: pointer; }
+  .sel-wrap select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Windows などでは option が系統色で出るので明示する */
+  .sel-wrap option { background: var(--card); color: var(--text); }
+  .sel-wrap .chev { position: absolute; right: 12px; pointer-events: none;
+                    color: var(--secondary); font-size: 0.81rem; }
+  .pick-sub { font-size: 0.88rem; color: var(--secondary); }
+  .pick-hint { margin-top: 9px; font-size: 0.75rem; color: var(--tertiary);
+               display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; }
+
   .highlight { border: 1px solid; }
   /* 数字ではなく評価の言葉を主役にする。
      スコアの実測誤差は ±9.5 点で、84 と 82 の差には意味がない。
@@ -186,7 +205,7 @@
 
   <div class="card" id="nowcast" hidden></div>
   <div id="status" class="card muted" hidden></div>
-  <button class="card highlight" id="highlight" hidden style="width:100%;text-align:left"></button>
+  <div class="card" id="picker" hidden></div>
   <div class="card" id="matrix"></div>
   <div id="detailPane"></div>
 
@@ -222,8 +241,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826160554"></script>
-<script src="sorami-core.js?v=20260826160554"></script>
+<script src="spots.js?v=20260826161518"></script>
+<script src="sorami-core.js?v=20260826161518"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -331,7 +350,7 @@ let selectedDay = {};    // phenomenon → dayMs
 async function load(force) {
   $("status").hidden = false;
   $("status").textContent = "4つの気象モデルから取得しています…";
-  $("highlight").hidden = true;
+  $("picker").hidden = true;
   try {
     // 光害はその地点の素質なので予報と並行に取得する。取れなくても致命的ではない。
     const [fetched, lp] = await Promise.all([
@@ -399,48 +418,19 @@ function render() {
     if (u.evaluation.window[1] <= now || u.evaluation.peak > now + 36 * 3600000) continue;
     if (!best || u.evaluation.score > best.u.evaluation.score) best = { id, u };
   }
-  if (best) {
-    const ev = best.u.evaluation, color = RANK_COLOR[ev.rank.key];
-    $("highlight").hidden = false;
-    $("highlight").style.borderColor = color;
-    // 詳細の頭と同じカードを二度出すと、同じ点数が画面に二回並ぶ。
-    // ここは「どれを見ればいいか」を指すだけの一行に徹する。
-    $("highlight").innerHTML = `
-      <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:1.5rem;flex:none">${S.PHENOMENA[best.id].icon}</span>
-        <span style="flex:1;min-width:0">
-          <span class="muted" style="font-size:0.72rem">${HIGHLIGHT_HEAD[ev.rank.key]}</span>
-          <div><strong>${S.PHENOMENA[best.id].name}</strong>
-            <span class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</span>
-            ・<span style="color:${color};font-weight:700">${esc(S.phrasing(best.id, ev.rank).label)}</span></div></span>
-        <span class="chev muted" style="flex:none">▸</span>
-      </div>`;
-    $("highlight").onclick = () => {
-      picked = best.id;
-      selectedDay[best.id] = best.u.dayMs;
-      render();
-      $("detailPane").scrollIntoView({ behavior: "smooth", block: "start" });
-    };
-  } else $("highlight").hidden = true;
-
-  // 一覧の並び: 評価できるものが先 → 時刻が決まっているものが先 → 直近に起きる順。
+  // 並び: 見られる見込みのあるものが先 → あとは一日の流れ（朝焼け→…→夕焼け→星空）。
   //
-  // 「時刻が決まっているか」を挟むのが要点。虹は雨の時間を特定できない日でも
-  // 窓の開始時刻を持っており、それで並べると朝の早い時刻として先頭に来る。
-  // 実際に 2点「期待薄」の虹が 84点の夕焼けより上に出ていた。
-  // 画面ではその時刻を表示しない（specificTime === false）のに、
-  // 表示しない時刻で並べていたことになる。
+  // 以前は「直近に起きる順」で並べていたが、7日ぶんを一度に見る表では
+  // どの行も同じ7日を持つので「直近」に意味がない。しかも日をまたぐたびに
+  // 行が入れ替わり、いつも同じ場所を見れば済むという利点を失っていた。
+  // 一日の流れに沿った固定順にして、行の位置が動かないようにする。
+  //
+  // 対象外（標高が足りない・氷点下にならない等）だけ最後へ回す。
+  // その行はセルが無く1本のメッセージになるので、間に挟まると表が分断される。
   const order = Object.keys(weeks).sort((a, b) => {
     const ua = upcoming(weeks[a], now), ub = upcoming(weeks[b], now);
     const aOk = ua && !ua.evaluation.unavailable, bOk = ub && !ub.evaluation.unavailable;
     if (aOk !== bOk) return aOk ? -1 : 1;
-    if (aOk) {
-      const aTimed = ua.evaluation.specificTime !== false;
-      const bTimed = ub.evaluation.specificTime !== false;
-      if (aTimed !== bTimed) return aTimed ? -1 : 1;
-    }
-    const pa = aOk ? ua.evaluation.peak : Infinity, pb = bOk ? ub.evaluation.peak : Infinity;
-    if (pa !== pb) return pa - pb;
     return S.PHENOMENA[a].order - S.PHENOMENA[b].order;
   });
   // 選択中の現象。未選択なら見どころ、それも無ければ評価できる最初のもの。
@@ -450,28 +440,18 @@ function render() {
   });
   if (!picked || !weeks[picked]) picked = best ? best.id : (evaluable[0] || order[0]);
 
+  renderPicker(order, best, now);
   $("matrix").innerHTML = renderMatrix(order, now);
   $("detailPane").innerHTML = renderDetailPane(picked, now);
-  const showDetail = () => $("detailPane").scrollIntoView({ behavior: "smooth", block: "start" });
   for (const el of $("matrix").querySelectorAll("[data-cell]")) {
     el.onclick = () => {
       const [id, dayMs] = el.dataset.cell.split("|");
-      picked = id;
-      selectedDay[id] = +dayMs;
-      render();
-      showDetail();
+      pick(id, now, +dayMs);
     };
   }
   // 現象名を押したときは日付を指定していないので、直近の回に合わせる。
   for (const el of $("matrix").querySelectorAll("[data-pick]")) {
-    el.onclick = () => {
-      const id = el.dataset.pick;
-      picked = id;
-      const u = upcoming(weeks[id], now);
-      if (u) selectedDay[id] = u.dayMs;
-      render();
-      showDetail();
-    };
+    el.onclick = () => pick(el.dataset.pick, now);
   }
 
   const scope = document.querySelector("main");
@@ -498,6 +478,76 @@ function render() {
     + `夕焼け・朝焼けは、頭上だけでなく日の入り方向 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° の空の雲も見ています。<br>`
     + `<strong>これは予報です。</strong>実際の空とは違うことがあります。見に行くかどうかの目安としてお使いください。<br>`
     + `予報: Open-Meteo ／ 実況: 気象庁アメダス ／ 光害: <a href="https://djlorenz.github.io/astronomy/lp/">Lorenz Light Pollution Atlas 2025</a>（VIIRS） ／ 検索: OSM Nominatim ・ 国土地理院`;
+}
+
+// 見たいものを選ぶプルダウン。
+//
+// 表のセルからでも切り替えられるが、それは「どの日か」まで決める操作で、
+// 「まず何を見たいか」を決める入口が無かった。ここがその入口。
+// 既定は「次の見どころ」（36時間以内で最高のもの）で、選び直すとそちらへ移る。
+//
+// 推薦と選択は別物なので、選択が推薦から外れたら
+// 推薦へ戻る導線を残す。推薦を黙って消すと、何が良い日なのか分からなくなる。
+function renderPicker(order, best, now) {
+  if (!order.length) { $("picker").hidden = true; return; }
+  $("picker").hidden = false;
+
+  const options = order.map((id) => {
+    const meta = S.PHENOMENA[id];
+    return `<option value="${id}"${id === picked ? " selected" : ""}>${meta.icon} ${meta.name}</option>`;
+  }).join("");
+
+  const entries = weeks[picked];
+  const u = entries ? upcoming(entries, now) : null;
+  const sel = (entries && entries.find((e) => e.dayMs === selectedDay[picked])) || u;
+  let sub = "";
+  if (sel) {
+    const ev = sel.evaluation;
+    if (ev.unavailable) {
+      sub = `<span class="pick-sub">${esc(ev.unavailable.message)}</span>`;
+    } else {
+      const color = RANK_COLOR[ev.rank.key];
+      sub = `<span class="pick-sub">${S.JstCal.relativeDay(sel.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}
+        ・<b style="color:${color}">${esc(S.phrasing(picked, ev.rank).label)}</b></span>`;
+    }
+  }
+
+  let hint = "";
+  if (best) {
+    const bev = best.u.evaluation;
+    if (best.id === picked) {
+      // いま見ているものが推薦そのもの。見出しでそれを伝える。
+      hint = `<div class="pick-hint">★ ${HIGHLIGHT_HEAD[bev.rank.key]}</div>`;
+    } else {
+      hint = `<button class="pick-hint" id="backToBest">★ いちばんの狙いめは
+        ${S.PHENOMENA[best.id].icon} ${S.PHENOMENA[best.id].name}
+        （${S.JstCal.relativeDay(best.u.dayMs, now)}${bev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(bev.peak)}）
+        <span class="chev">▸</span></button>`;
+    }
+  }
+
+  $("picker").innerHTML = `<div class="pick-row">
+      <label class="muted" for="phSelect" style="font-size:0.72rem">見たいもの</label>
+      <span class="sel-wrap"><select id="phSelect">${options}</select><span class="chev">▾</span></span>
+      ${sub}
+    </div>${hint}`;
+
+  $("phSelect").onchange = (e) => {
+    pick(e.target.value, now);
+  };
+  const back = document.getElementById("backToBest");
+  if (back) back.onclick = () => pick(best.id, now, best.u.dayMs);
+}
+
+// 現象を選ぶ。日を指定しなければ直近の回に合わせる。
+function pick(id, now, dayMs) {
+  picked = id;
+  const u = upcoming(weeks[id], now);
+  selectedDay[id] = dayMs !== undefined ? dayMs : (u ? u.dayMs : selectedDay[id]);
+  render();
+  // block:"nearest" にする。start だと詳細が画面上端に来て、
+  // プルダウンも表も視界から消え、続けて選び直せなくなる。
+  $("detailPane").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // この先7日 × 全現象。
