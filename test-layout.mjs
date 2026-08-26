@@ -19,25 +19,32 @@ console.log("== sticky を使わない ==");
 // スクロールすると週間の行が記録カードの上に描画された（551点中361点が被覆）。
 ok(!/position:\s*sticky/.test(code), "レイアウトに position: sticky が無い");
 
-console.log("== 週の一覧（マトリクス）が主役 ==");
-ok(/id="matrix"/.test(html), "#matrix がある");
-ok(/function renderMatrix/.test(html), "renderMatrix がある");
-ok(html.indexOf('id="matrix"') < html.indexOf('id="detailPane"'),
-  "マトリクスが詳細より前にある");
-ok(/data-cell=/.test(html), "セルが押せる（data-cell）");
-ok(/mx-legend/.test(html), "色の凡例がある");
-// 対象外の行（雲海・霧氷・ダイヤモンドダスト）には押せるセルが1つも無い。
-// 名前が押せないと、それらの詳細（週間・理由）へ到達する手段がまったく無くなる。
-ok(/<button class="lbl\$\{on\}" data-pick=/.test(html), "現象名が押せる");
-ok(/<button class="na" data-pick=/.test(html), "対象外の行も押せる");
-// 日を指定しない経路（名前・プルダウン）は pick() が直近の回へ合わせる。
-const pickFn = html.slice(html.indexOf("function pick(id, now, dayMs)"),
-                          html.indexOf("function pick(id, now, dayMs)") + 400);
-ok(/upcoming\(weeks\[id\], now\)/.test(pickFn), "日を指定しなければ直近の回に合わせる");
-ok(/dayMs !== undefined && dayMs !== null \? dayMs/.test(pickFn), "日を指定したときはその日を使う");
-// セル幅は 375px 端末で 27px しかなく、評価の言葉を入れると3行に折り返して読めなかった。
-ok(!/class="r" style="color:\$\{color\}">\$\{esc\(S\.phrasing/.test(html),
-  "セルに評価の言葉を入れていない（折り返して読めなくなる）");
+console.log("== 現象ごとにカードを分ける ==");
+// 7現象×7日をひとつの表にしていたが、49個の数字を凡例と照らし合わせて読む形で、
+// 「見に行くか」を決める道具になっていなかった。
+ok(!/renderMatrix/.test(html), "ひとつの表にまとめていない");
+ok(/function renderPhenomenonCards/.test(html), "現象ごとのカードを描く");
+ok(/id="cards"/.test(html), "#cards がある");
+// 色や数字を覚えなくても、どの日がいいかが棒の高さで分かる。
+ok(/30 \* ev\.score \/ 100/.test(html), "日の良し悪しを棒の高さで示す");
+ok(/class="day\$\{isNext\}" data-cell=/.test(html), "日がボタンになっている");
+
+console.log("== 押せるものだけが押せる見た目 ==");
+// 情報カードごと押せると、読んでいるつもりの場所で画面が変わる。
+ok(/function renderBestNote/.test(html), "いちばんの狙いめは案内のみ");
+const noteFn = html.slice(html.indexOf("function renderBestNote"), html.indexOf("function renderBestNote") + 900);
+ok(!/onclick/.test(noteFn), "いちばんの狙いめを押しても移動しない");
+ok(/\.day \{[^}]*border: 1px solid/.test(html), "日のボタンに枠がある");
+ok(/\.day:active/.test(html), "押したときの見た目がある");
+// 7日すべて対象外なら開いても同じ文が出るだけの行き止まり。押せる場所を作らない。
+const cardsFn = html.slice(html.indexOf("function renderPhenomenonCards"), html.indexOf("/// 選択中の現象の詳細"));
+const outBlock = cardsFn.slice(cardsFn.indexOf("if (allOut)"), cardsFn.indexOf("if (allOut)") + 300);
+ok(!/data-cell|<button/.test(outBlock), "対象外の現象に行き止まりのボタンを作らない");
+
+console.log("== 詳細にプルダウンを置かない ==");
+// 画面を分けたので、別の現象は一覧へ戻って選ぶ。行き先が分かる。
+ok(!/phSelect/.test(html), "現象を選ぶ select が無い");
+ok(!/renderPhenomenonSelect/.test(html), "プルダウンの描画が残っていない");
 
 console.log("== 点数より評価を大きく出す ==");
 // 実測誤差は ±9.5 点。以前は数字 38.4px に対し「±8点」が 11px と 3.5 倍の差があった。
@@ -61,23 +68,17 @@ ok(/listScrollY/.test(html), "一覧へ戻ったとき元の位置に戻す");
 // 詳細の中で現象を替えるたびに履歴を積むと、戻るのに何度も押させることになる。
 ok(/location\.replace/.test(html), "詳細内の切り替えは履歴を積まない");
 
-console.log("== 詳細の見出しがそのまま現象の選択 ==");
-ok(/id="phSelect"/.test(html), "現象を選ぶ select がある");
-ok(/function renderPhenomenonSelect/.test(html), "renderPhenomenonSelect がある");
-ok(/id="backToBest"/.test(html), "いちばんの狙いめへ戻る導線がある");
-// 390px では select 約220px ＋「よく染まる」約130px が1行に収まらず重なった。
+console.log("== 詳細の見出し ==");
+// 390px では見出しと評価を1行に並べると重なった（実機で確認）。
 const headBlock = html.slice(html.indexOf('const head = `<div class="card highlight"'),
                              html.indexOf('const head = `<div class="card highlight"') + 400);
-ok(/head-row/.test(headBlock) && headBlock.indexOf("renderPhenomenonSelect") < headBlock.indexOf("head-row"),
-  "プルダウンと評価を同じ行に並べない（重なる）");
+ok(/ph-head/.test(headBlock) && /head-row/.test(headBlock), "名前と評価を別の行に置く");
 ok(/\.verdict-box \{[^}]*flex: none/.test(html), "評価の箱が縮まない");
 
 console.log("== 日を指定しないURLは直近の回を指す ==");
 ok(/delete selectedDay\[route\.id\]/.test(html),
   "#/sunset を開いたら前に見ていた日を持ち越さない");
-// 同じ夕焼けでも2日先を見ているなら、推薦しているのは今日のほう。
-ok(/best\.id === id && best\.u\.dayMs === dayMs/.test(html),
-  "「次の見どころ」は現象と日の両方が一致したときだけ");
+
 
 console.log("== 記録は0件のとき畳む ==");
 ok(/id="recEmpty"/.test(html) && /id="recBody"/.test(html), "空表示と本体が分かれている");
@@ -99,10 +100,6 @@ ok(!/\.peak/.test(sortBlock), "並びが発生時刻に依存していない");
 ok(/PHENOMENA\[a\]\.order - S\.PHENOMENA\[b\]\.order/.test(sortBlock), "固定順を使っている");
 ok(/unavailable/.test(sortBlock), "対象外は最後へ回す");
 
-console.log("== 長い名前が3行に割れない ==");
-ok(/word-break: keep-all/.test(html), "表の行ラベルは空白でだけ折り返す");
-ok(/meta\.short \|\| meta\.name/.test(html), "長い名前は短縮名を使う");
-
 console.log("== 現象の並びが似たもの同士で隣り合う ==");
 const core = fs.readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8");
 const orderOf = (key) => {
@@ -116,8 +113,6 @@ ok(got.every((v, i) => v === i),
   got.join(","));
 // 同じ判定（SunsetWx特許）で対になる2つ。離すと見比べられない。
 ok(orderOf("sunset") === orderOf("sunrise") + 1, "朝焼けの次が夕焼け");
-ok(/short: "\u30c0\u30a4\u30e4\u30e2\u30f3\u30c9 \u30c0\u30b9\u30c8"/.test(core),
-  "ダイヤモンドダストの短縮名がある");
 
 console.log(`\n${fail === 0 ? "LAYOUT OK" : "FAILED"} — ${pass} 件成功 / ${fail} 件失敗`);
 process.exit(fail === 0 ? 0 : 1);

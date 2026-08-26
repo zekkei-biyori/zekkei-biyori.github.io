@@ -31,6 +31,9 @@
     /* 地点ヘッダーは全幅に伸ばすと間延びする */
     .place-row { max-width: 360px; }
     h1 { text-align: left; padding-left: 2px; }
+    /* 一覧は1列なので、幅いっぱいに伸ばすと日のボタンが間延びする。
+       読みやすい幅で止める。 */
+    #listView, main > .card { max-width: 760px; }
     /* 詳細は「説明」と「裏づけの数値」で列を分ける。
        1行を長くしないためで、幅が余ってもこれ以上は広げない。 */
     .detail-wrap { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
@@ -43,8 +46,6 @@
     /* 広い側では数値表が収まるので横スクロールを出さない */
     .detail-side .scrollx { overflow-x: visible; }
     .detail-side table.numbers { width: 100%; }
-    /* 週の一覧は列が増えるぶん、日付を少し広く取れる */
-    .mx { grid-template-columns: 116px repeat(7, minmax(0, 1fr)); }
   }
   h1 { font-size: 1.13rem; text-align: center; padding: 6px 0 10px; }
   .card { background: var(--card); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; }
@@ -73,36 +74,6 @@
      空いている右側と上下だけへ伸ばす。 */
   #favToggle::after { left: auto; right: -20px; transform: translateY(-50%);
                       width: 40px; }
-  /* この先7日 × 7現象。56個のスコアを計算しているのに、
-     これまでは1現象ずつ開かないと週を見られなかった。
-     雲海・霧氷・ダイヤモンドダスト・星空は移動が前提で、
-     「今週いつ行くか」を決めるのがこのアプリの主な使い道になる。 */
-  .mx { display: grid; grid-template-columns: 84px repeat(7, minmax(0, 1fr));
-        gap: 3px; align-items: stretch; }
-  .mx .hd { font-size: 0.67rem; color: var(--tertiary); text-align: center;
-            line-height: 1.15; padding-bottom: 2px; }
-  .mx .hd.today { color: var(--accent); font-weight: 700; }
-  .mx .lbl { display: flex; align-items: center; gap: 5px; font-size: 0.75rem;
-             line-height: 1.15; min-width: 0; padding: 2px 4px 2px 2px; text-align: left;
-             border-radius: 7px; width: 100%;
-             /* 「ダイヤモンドダスト」が3行に割れていた。空白でだけ折り返す。 */
-             word-break: keep-all; overflow-wrap: normal; }
-  .mx .lbl .i { font-size: 0.94rem; flex: none; }
-  .mx .lbl.on { background: color-mix(in srgb, var(--text) 10%, transparent); font-weight: 700; }
-  @media (hover: hover) { .mx .lbl:hover, .mx .na:hover { background: color-mix(in srgb, var(--text) 7%, transparent); } }
-  .mx .cell { border-radius: 7px; height: 34px; display: flex;
-              align-items: center; justify-content: center; line-height: 1;
-              border: 1.5px solid transparent; }
-  .mx .cell .v { font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .mx-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px;
-               font-size: 0.67rem; color: var(--tertiary); }
-  .mx-legend .lg { display: inline-flex; align-items: center; gap: 4px; }
-  .mx-legend .lg i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-  .mx .cell.sel { border-color: var(--text); }
-  .mx .na { grid-column: 2 / -1; display: flex; align-items: center; font-size: 0.69rem;
-            color: var(--tertiary); background: var(--line); border-radius: 7px;
-            padding: 0 9px; width: 100%; text-align: left; min-height: 28px; }
-
   .scorebar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .scorebar > div { height: 100%; border-radius: 4px; }
 
@@ -111,25 +82,58 @@
      キーボード操作も読み上げも自前で用意しなくて済む。 */
   .back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
           color: var(--accent); font-size: 0.88rem; padding: 0 2px; margin-bottom: 2px; }
-  .bestlink { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; }
-  .bestlink .i { font-size: 1.5rem; flex: none; }
-  .bestlink .b { flex: 1; min-width: 0; }
 
-  .pick-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .sel-wrap { position: relative; display: inline-flex; align-items: center; }
-  .sel-wrap select { appearance: none; -webkit-appearance: none; font: inherit;
-                     font-size: 1.06rem; font-weight: 700; color: var(--text);
-                     background: color-mix(in srgb, var(--text) 8%, transparent);
-                     border: 1px solid var(--line); border-radius: 10px;
-                     padding: 9px 32px 9px 12px; min-height: 44px; cursor: pointer; }
-  .sel-wrap select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* Windows などでは option が系統色で出るので明示する */
-  .sel-wrap option { background: var(--card); color: var(--text); }
-  .sel-wrap .chev { position: absolute; right: 12px; pointer-events: none;
-                    color: var(--secondary); font-size: 0.81rem; }
-  .pick-sub { font-size: 0.88rem; color: var(--secondary); }
-  .pick-hint { margin-top: 9px; font-size: 0.75rem; color: var(--tertiary);
-               display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; }
+  /* 現象ごとのカード。ひとつの表に全部を詰めると、49個の数字を
+     凡例と照らし合わせながら読むことになり、決める道具にならなかった。
+     現象ごとに分け、日の良し悪しは【棒の高さ】で示す。
+     色や数字を覚えなくても、どの日がいいかがそのまま見える。 */
+  .ph-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .ph-head .nm { font-weight: 700; font-size: 1rem; }
+  .ph-head .ic { font-size: 1.19rem; }
+  .ph-out { color: var(--tertiary); font-size: 0.81rem; margin-top: 5px; }
+
+  /* 日を押すと詳しい画面へ。押せることが分かるよう、地の色と枠を付ける。 */
+  .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; }
+  .day { display: flex; flex-direction: column; align-items: center; gap: 3px;
+         padding: 5px 2px; border-radius: 10px; min-height: 44px;
+         background: color-mix(in srgb, var(--text) 6%, transparent);
+         border: 1px solid color-mix(in srgb, var(--text) 9%, transparent); }
+  .day:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
+  @media (hover: hover) { .day:hover { border-color: var(--accent); } }
+  .day .v { font-size: 0.72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  /* 棒の高さが良し悪しを示す。凡例を見に行かなくても、どの日がいいか分かる。 */
+  /* 幅の広い画面で棒が横に間延びして「棒」に見えなくなるので上限を置く。 */
+  .day .col { width: 58%; max-width: 46px; height: 30px; display: flex; align-items: flex-end; }
+  .day .col i { display: block; width: 100%; border-radius: 3px; min-height: 3px; }
+  .day .d { font-size: 0.63rem; color: var(--tertiary); line-height: 1.1; text-align: center; }
+  /* 次に来る回。どこから見ればいいかの起点を示す。 */
+  .day.next { border-color: var(--accent); }
+
+  .back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
+          color: var(--accent); font-size: 0.88rem; padding: 0 2px; margin-bottom: 2px; }
+
+  /* 現象ごとのカード。ひとつの表に全部を詰めると、49個の数字を
+     凡例と照らし合わせながら読むことになり、決める道具にならなかった。
+     現象ごとに分け、日の良し悪しは【棒の高さ】で示す。
+     色や数字を覚えなくても、どの日がいいかがそのまま見える。 */
+  .ph-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .ph-head .nm { font-weight: 700; font-size: 1rem; }
+  .ph-head .ic { font-size: 1.19rem; }
+  .ph-out { color: var(--tertiary); font-size: 0.81rem; margin-top: 5px; }
+
+  /* 日を押すと詳しい画面へ。押せることが分かるよう、地の色と枠を付ける。 */
+  .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 11px; }
+  .day { display: flex; flex-direction: column; align-items: center; gap: 4px;
+         padding: 7px 2px 6px; border-radius: 10px; min-height: 44px;
+         background: color-mix(in srgb, var(--text) 6%, transparent);
+         border: 1px solid color-mix(in srgb, var(--text) 9%, transparent); }
+  .day:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
+  @media (hover: hover) { .day:hover { border-color: var(--accent); } }
+  .day .v { font-size: 0.75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .day .col { width: 60%; height: 26px; display: flex; align-items: flex-end; }
+  .day .col i { display: block; width: 100%; border-radius: 3px; min-height: 2px; }
+  .day .d { font-size: 0.63rem; color: var(--tertiary); line-height: 1.12; text-align: center; }
+  .day.next { border-color: var(--accent); }
 
   .highlight { border: 1px solid; }
   /* 数字ではなく評価の言葉を主役にする。
@@ -143,9 +147,6 @@
   .highlight .verdict { font-size: 1.44rem; font-weight: 800; line-height: 1.1; }
   .highlight .big { font-size: 1rem; font-weight: 700; line-height: 1;
                     font-variant-numeric: tabular-nums; }
-  /* プルダウンは見出しなので幅いっぱいまで使ってよい。ただし親をはみ出さない。 */
-  .highlight .sel-wrap { max-width: 100%; }
-  .highlight .sel-wrap select { max-width: 100%; }
   .scorebar .band { position: absolute; top: 0; bottom: 0; opacity: .34; }
   .scorebar.withband { position: relative; }
   .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
@@ -223,8 +224,8 @@
 
   <!-- 一覧画面: この先7日をひと目で見る -->
   <div id="listView">
-    <button class="card bestlink" id="bestLink" hidden></button>
-    <div class="card" id="matrix"></div>
+    <div class="card" id="bestNote" hidden></div>
+    <div id="cards"></div>
   </div>
 
   <!-- 詳細画面: 1つの現象・1つの日を読む。別画面にして、
@@ -266,8 +267,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826164122"></script>
-<script src="sorami-core.js?v=20260826164122"></script>
+<script src="spots.js?v=20260826172358"></script>
+<script src="sorami-core.js?v=20260826172358"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -383,7 +384,7 @@ let selectedDay = {};    // phenomenon → dayMs
 async function load(force) {
   $("status").hidden = false;
   $("status").textContent = "4つの気象モデルから取得しています…";
-  $("bestLink").hidden = true;
+  $("bestNote").hidden = true;
   try {
     // 光害はその地点の素質なので予報と並行に取得する。取れなくても致命的ではない。
     const [fetched, lp] = await Promise.all([
@@ -479,12 +480,8 @@ function render() {
   $("records").hidden = inDetail;   // 記録は一覧側の話。詳細を読むときに挟まない
 
   if (inDetail) {
-    $("detailPane").innerHTML = renderDetailPane(picked, now, order, best);
+    $("detailPane").innerHTML = renderDetailPane(picked, now);
     $("backBtn").onclick = goList;
-    const sel = document.getElementById("phSelect");
-    if (sel) sel.onchange = (e) => swap(e.target.value, now);
-    const back = document.getElementById("backToBest");
-    if (back) back.onclick = () => swap(best.id, now, best.u.dayMs);
     // 週間の行で日を替える。詳細だけを見ている画面なので、表は出ていない。
     for (const el of $("detailPane").querySelectorAll("[data-day]")) {
       el.onclick = () => {
@@ -494,17 +491,13 @@ function render() {
       };
     }
   } else {
-    renderBestLink(best, now);
-    $("matrix").innerHTML = renderMatrix(order, now);
-    for (const el of $("matrix").querySelectorAll("[data-cell]")) {
+    renderBestNote(best, now);
+    $("cards").innerHTML = renderPhenomenonCards(order, now);
+    for (const el of $("cards").querySelectorAll("[data-cell]")) {
       el.onclick = () => {
         const [id, dayMs] = el.dataset.cell.split("|");
         pick(id, now, +dayMs);
       };
-    }
-    // 現象名を押したときは日付を指定していないので、直近の回に合わせる。
-    for (const el of $("matrix").querySelectorAll("[data-pick]")) {
-      el.onclick = () => pick(el.dataset.pick, now);
     }
   }
 
@@ -550,16 +543,6 @@ function pick(id, now, dayMs) {
   location.hash = day !== null ? `#/${id}/${day}` : `#/${id}`;
 }
 
-/// 詳細の中で現象だけを替える。履歴を積むと戻るのに何度も押させることになるので置き換える。
-function swap(id, now, dayMs) {
-  const u = upcoming(weeks[id], now);
-  const day = dayMs !== undefined && dayMs !== null ? dayMs : (u ? u.dayMs : null);
-  if (dayMs !== undefined && dayMs !== null) selectedDay[id] = dayMs;
-  else delete selectedDay[id];
-  location.replace(day !== null ? `#/${id}/${day}` : `#/${id}`);
-  applyRoute();
-}
-
 function goList() {
   // 自分で進めてきたなら戻るで返す（履歴を増やさない）。
   // 詳細のURLを直接開いた場合は戻り先が無いので、ハッシュを外す。
@@ -583,112 +566,106 @@ function applyRoute() {
 }
 window.addEventListener("hashchange", applyRoute);
 
-// 一覧の先頭に置く「いちばんの狙いめ」への導線。
+// いちばんの狙いめ。【押せない】ただの案内にしてある。
 //
-// 表は 49 マスあるので、どこを見ればいいかを最初に一行で示す。
-// 36時間以内で最高のものを指す。全部だめな日に「見どころ」と書かないよう、
-// 見出しはランクに追従する（HIGHLIGHT_HEAD）。
-function renderBestLink(best, now) {
-  if (!best) { $("bestLink").hidden = true; return; }
+// 以前はカードごと押すとその現象へ飛んでいたが、見た目が情報カードなので
+// 押すつもりのない場所で画面が変わっていた。押せるのは日のボタンだけにする。
+function renderBestNote(best, now) {
+  if (!best) { $("bestNote").hidden = true; return; }
   const ev = best.u.evaluation, color = RANK_COLOR[ev.rank.key];
-  $("bestLink").hidden = false;
-  $("bestLink").style.borderColor = color;
-  $("bestLink").innerHTML = `<span class="i">${S.PHENOMENA[best.id].icon}</span>
-    <span class="b"><span class="muted" style="font-size:0.72rem">★ ${HIGHLIGHT_HEAD[ev.rank.key]}</span>
-      <div><strong>${S.PHENOMENA[best.id].name}</strong>
-        <span class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</span>
-        ・<span style="color:${color};font-weight:700">${esc(S.phrasing(best.id, ev.rank).label)}</span></div></span>
-    <span class="chev muted">▸</span>`;
-  $("bestLink").onclick = () => pick(best.id, now, best.u.dayMs);
+  $("bestNote").hidden = false;
+  $("bestNote").innerHTML = `<div class="muted" style="font-size:0.72rem">★ ${HIGHLIGHT_HEAD[ev.rank.key]}</div>
+    <div style="margin-top:3px"><span style="font-size:1.19rem">${S.PHENOMENA[best.id].icon}</span>
+      <strong style="margin-left:4px">${S.PHENOMENA[best.id].name}</strong>
+      <span class="muted">${S.JstCal.relativeDay(best.u.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}</span>
+      ・<span style="color:${color};font-weight:700">${esc(S.phrasing(best.id, ev.rank).label)}</span></div>`;
 }
 
-// この先7日 × 全現象。
+// 現象ごとのカード。
 //
-// これまで 56 個のスコア（7現象×8日）を計算しておきながら、画面に出ていたのは
-// 今日の最高・今日の7現象・1現象ぶんの週間だけだった。「今週いつ、何が良いか」を
-// 知るには7回開いて頭の中で転置するしかなかった。
-// 雲海・霧氷・ダイヤモンドダスト・星空は移動が前提で、計画してこそ使える。
+// 以前は 7現象 × 7日 をひとつの表にしていたが、49個の数字を凡例と
+// 照らし合わせて読む形になっていて、「見に行くか」を決める道具になっていなかった。
+// 現象ごとに分け、日の良し悪しは【棒の高さ】で示す。
+// 色や数字を覚えなくても、どの日がいいかがそのまま見える。
 //
-// セルは評価の色を主役にし、点数は小さく添える。点数の実測誤差は ±9.5 点なので、
-// 84 と 82 を並べて見比べる意味はない。色（＝評価）が判断の単位。
-function renderMatrix(order, now) {
-  const days = weeks[order[0]] ? weeks[order[0]].map((e) => e.dayMs) : [];
-  if (!days.length) return "";
-  const head = `<div class="hd"></div>` + days.map((d) => {
-    const label = S.JstCal.relativeDay(d, now).replace(/^(\d+)\/(\d+)\((.)\)$/, "$1/$2<br>$3");
-    const today = d === S.JstCal.startOfDay(now);
-    return `<div class="hd${today ? " today" : ""}">${label}</div>`;
-  }).join("");
-
-  const rows = order.map((id) => {
+// 押せるのは日のボタンだけ。カード全体を押せるようにすると、
+// 情報を読んでいるつもりの場所で画面が変わってしまう。
+function renderPhenomenonCards(order, now) {
+  return order.map((id) => {
     const entries = weeks[id];
     const meta = S.PHENOMENA[id];
     if (!entries || !entries.length) return "";
-    const on = id === picked ? " on" : "";
-    const label = `<button class="lbl${on}" data-pick="${id}">
-      <span class="i">${meta.icon}</span><span>${meta.short || meta.name}</span></button>`;
-    // 7日すべて対象外なら、空のセルを7個並べるより理由を1行書いたほうが伝わる。
-    // ただしその行には押せるセルが無くなるので、名前のほうを押せるようにしてある
-    // （そうしないと雲海・霧氷・ダイヤモンドダストの詳細へ到達できない）。
+    const u = upcoming(entries, now);
     const allOut = entries.every((e) => e.evaluation.unavailable);
-    if (allOut) {
-      return label + `<button class="na" data-pick="${id}">${esc(entries[0].evaluation.unavailable.message)}</button>`;
-    }
-    return label + entries.map((e) => {
-      const ev = e.evaluation;
-      if (ev.unavailable) return `<div class="cell" style="background:var(--line)"></div>`;
-      const color = RANK_COLOR[ev.rank.key];
-      const sel = id === picked && e.dayMs === (selectedDay[id] ?? -1) ? " sel" : "";
-      return `<button class="cell${sel}" data-cell="${id}|${e.dayMs}"
-        style="background:color-mix(in srgb,${color} 22%,transparent)"
-        title="${esc(meta.name)} ${S.JstCal.relativeDay(e.dayMs, now)} ${Math.round(ev.score)}点 ${esc(S.phrasing(id, ev.rank).label)}">
-        <span class="v" style="color:${color}">${Math.round(ev.score)}</span></button>`;
-    }).join("");
-  }).join("");
 
-  // 色が評価、数字が点数。セルに評価の言葉を入れると3行に折り返して読めなくなるため、
-  // 言葉は凡例で一度だけ示す。
-  const legend = S.RANKS.map((r) => `<span class="lg">
-      <i style="background:${RANK_COLOR[r.key]}"></i>${r.label}</span>`).join("");
-  return `<div class="section-h"><h2>この先7日</h2>
-      <span class="tiny">押すとその日の詳しい内容が出ます</span></div>
-    <div class="mx">${head}${rows}</div>
-    <div class="mx-legend">${legend}</div>`;
+    if (allOut) {
+      // 7日すべて対象外なら、見に行く日が無い。理由だけ書いて、押せる場所も作らない
+      //（開いても同じ文が出るだけの行き止まりになる）。
+      return `<div class="card">
+        <div class="ph-head"><span class="ic">${meta.icon}</span><span class="nm">${meta.name}</span></div>
+        <div class="ph-out">${esc(entries[0].evaluation.unavailable.message)}</div></div>`;
+    }
+
+    const uev = u ? u.evaluation : null;
+    const headRight = uev && !uev.unavailable
+      ? `<span class="muted">${S.JstCal.relativeDay(u.dayMs, now)}${uev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(uev.peak)}</span>
+         ・<span style="color:${RANK_COLOR[uev.rank.key]};font-weight:700">${esc(S.phrasing(id, uev.rank).label)}</span>`
+      : "";
+
+    const days = entries.map((e) => {
+      const ev = e.evaluation;
+      const label = S.JstCal.relativeDay(e.dayMs, now).replace(/^(\d+)\/(\d+)\((.)\)$/, "$1/$2<br>$3");
+      if (ev.unavailable) {
+        return `<div class="day" style="opacity:.45"><span class="v muted">—</span>
+          <span class="col"><i style="height:3px;background:var(--line)"></i></span>
+          <span class="d">${label}</span></div>`;
+      }
+      const color = RANK_COLOR[ev.rank.key];
+      const h = Math.max(3, Math.round(30 * ev.score / 100));
+      const isNext = u && e.dayMs === u.dayMs ? " next" : "";
+      return `<button class="day${isNext}" data-cell="${id}|${e.dayMs}"
+        title="${esc(meta.name)} ${S.JstCal.relativeDay(e.dayMs, now)} ${Math.round(ev.score)}点 ${esc(S.phrasing(id, ev.rank).label)}">
+        <span class="v" style="color:${color}">${Math.round(ev.score)}</span>
+        <span class="col"><i style="height:${h}px;background:${color}"></i></span>
+        <span class="d">${label}</span></button>`;
+    }).join("");
+
+    return `<div class="card">
+      <div class="ph-head"><span class="ic">${meta.icon}</span><span class="nm">${meta.name}</span>${headRight}</div>
+      <div class="days">${days}</div></div>`;
+  }).join("");
 }
 
-/// 選択中の現象の詳細。カードの見出しがそのまま現象の選択にもなっている。
+/// 選択中の現象の詳細。
 ///
-/// 以前は「見たいもの」のプルダウンを別カードで表の上に置いていたが、
-/// 現象名・時刻・評価がこの見出しと丸ごと重複していた。見出し自体を選択にする。
-///
-/// 「週間」はここに残す。一覧の表とは別画面なので、同じ7日が二度並ぶことはない。
-/// この画面で日を替える手段でもある。
-function renderDetailPane(id, now, order, best) {
+/// 現象を選ぶプルダウンは置かない。画面を分けたので、別の現象を見たいときは
+/// 一覧へ戻って選ぶのが素直で、行き先も分かる。
+/// 「週間」はここに残す。この画面で日を替える手段。
+function renderDetailPane(id, now) {
   const entries = weeks[id];
   if (!entries || !entries.length) return "";
   const u = upcoming(entries, now);
   const sel = entries.find((e) => e.dayMs === selectedDay[id]) || u;
   const ev = sel.evaluation;
-  const hint = renderBestHint(id, sel.dayMs, best, now);
+  const meta = S.PHENOMENA[id];
   const when = `${S.JstCal.relativeDay(sel.dayMs, now)}${ev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(ev.peak)}`;
 
   if (ev.unavailable) {
     return `<div data-id="${id}"><div class="card">
-      <div class="pick-row">${renderPhenomenonSelect(order)}
-        <span class="pick-sub">${esc(ev.unavailable.message)}</span></div>${hint}</div>
+      <div class="ph-head"><span class="ic">${meta.icon}</span><span class="nm">${meta.name}</span></div>
+      <div class="ph-out">${esc(ev.unavailable.message)}</div></div>
       <div class="card">${renderWeek(id, entries, sel, now)}</div></div>`;
   }
   const color = RANK_COLOR[ev.rank.key];
   const head = `<div class="card highlight" style="border-color:${color}">
-      ${renderPhenomenonSelect(order)}
+      <div class="ph-head"><span class="ic">${meta.icon}</span><span class="nm">${meta.name}</span></div>
       <div class="head-row">
         <span class="muted">${when}</span>
         ${renderVerdict(id, ev)}
       </div>
       ${renderScoreBar(ev)}
       <div style="margin-top:9px">${esc(S.phrasing(id, ev.rank).say)}</div>
-      <div class="tiny" style="margin-top:4px">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div>
-      ${hint}</div>`;
+      <div class="tiny" style="margin-top:4px">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div></div>`;
   return `<div data-id="${id}">${head}
     <div class="detail-wrap">
       <div class="detail-main"><div class="card">${renderDetail(id, sel, now)}</div></div>
@@ -698,33 +675,6 @@ function renderDetailPane(id, now, order, best) {
         <p class="tiny" style="padding:0 4px">📖 ${esc(ev.source)}</p>
       </div>
     </div></div>`;
-}
-
-/// 現象を選ぶプルダウン。ネイティブの select を使う。
-/// iOS ではホイール、Android ではリストと端末に馴染んだ出方になり、
-/// キーボード操作も読み上げも自前で用意しなくて済む。
-function renderPhenomenonSelect(order) {
-  const options = order.map((pid) => `<option value="${pid}"${pid === picked ? " selected" : ""}>`
-    + `${S.PHENOMENA[pid].icon} ${S.PHENOMENA[pid].name}</option>`).join("");
-  return `<span class="sel-wrap"><select id="phSelect" aria-label="見たいものを選ぶ">${options}</select>`
-    + `<span class="chev">▾</span></span>`;
-}
-
-/// 推薦（36時間以内でいちばん良いもの）への導線。
-/// いま見ているものが推薦そのものならそう伝え、外れていれば戻れるようにする。
-/// 推薦を黙って消すと、どれが良い日なのか分からなくなる。
-function renderBestHint(id, dayMs, best, now) {
-  if (!best) return "";
-  const bev = best.u.evaluation;
-  // 現象だけでなく日も一致していないと「次の見どころ」ではない。
-  // 同じ夕焼けでも2日先を見ているなら、推薦しているのは今日のほう。
-  if (best.id === id && best.u.dayMs === dayMs) {
-    return `<div class="pick-hint">★ ${HIGHLIGHT_HEAD[bev.rank.key]}</div>`;
-  }
-  return `<button class="pick-hint" id="backToBest">★ いちばんの狙いめは
-    ${S.PHENOMENA[best.id].icon} ${S.PHENOMENA[best.id].name}
-    （${S.JstCal.relativeDay(best.u.dayMs, now)}${bev.specificTime === false ? "" : " " + S.JstCal.hhmmRounded(bev.peak)}）
-    <span class="chev">▸</span></button>`;
 }
 
 // 評価の言葉を主役、点数を従にする。
