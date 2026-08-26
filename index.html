@@ -266,8 +266,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826163809"></script>
-<script src="sorami-core.js?v=20260826163809"></script>
+<script src="spots.js?v=20260826164122"></script>
+<script src="sorami-core.js?v=20260826164122"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -1069,7 +1069,28 @@ $("importFile").onchange = async (e) => {
 // 幅が閾値をまたいだら描画し直す（ウィンドウのリサイズ・画面回転）
 WIDE.addEventListener("change", () => { if (bundle) render(); });
 
+// GitHub Pages は HTML に max-age=600 を付けるため、更新しても最大10分は
+// 古い index.html が使われる。JS 側にキャッシュバスターを付けていても、
+// その版番号を書いている HTML 自体が古いので効かない（実際に旧画面が出た）。
+//
+// 読み込み後に本物の HTML を取りに行き、版が違えば一度だけ読み直す。
+// 一度きりにするのは、取得に失敗し続けたときの再読み込みループを避けるため。
+async function checkForUpdate() {
+  const running = (document.querySelector('script[src*="sorami-core.js"]') || {}).src || "";
+  const mine = (running.match(/[?&]v=(\d+)/) || [])[1];
+  if (!mine || sessionStorage.getItem("sorami.reloaded") === mine) return;
+  try {
+    const html = await (await fetch(location.pathname + "?v=" + Date.now(), { cache: "no-store" })).text();
+    const latest = (html.match(/sorami-core\.js\?v=(\d+)/) || [])[1];
+    if (latest && latest !== mine) {
+      sessionStorage.setItem("sorami.reloaded", latest);
+      location.reload();
+    }
+  } catch { /* 取れなければそのまま使う。更新確認は補助 */ }
+}
+
 load(false);
+checkForUpdate();
 </script>
 </body>
 </html>
