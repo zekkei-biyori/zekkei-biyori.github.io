@@ -266,8 +266,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826163030"></script>
-<script src="sorami-core.js?v=20260826163030"></script>
+<script src="spots.js?v=20260826163809"></script>
+<script src="sorami-core.js?v=20260826163809"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -453,12 +453,12 @@ function render() {
     if (u.evaluation.window[1] <= now || u.evaluation.peak > now + 36 * 3600000) continue;
     if (!best || u.evaluation.score > best.u.evaluation.score) best = { id, u };
   }
-  // 並び: 見られる見込みのあるものが先 → あとは一日の流れ（朝焼け→…→夕焼け→星空）。
+  // 並び: 見られる見込みのあるものが先 → あとは PHENOMENA.order（似たものが隣）。
   //
   // 以前は「直近に起きる順」で並べていたが、7日ぶんを一度に見る表では
   // どの行も同じ7日を持つので「直近」に意味がない。しかも日をまたぐたびに
   // 行が入れ替わり、いつも同じ場所を見れば済むという利点を失っていた。
-  // 一日の流れに沿った固定順にして、行の位置が動かないようにする。
+  // 固定順にして、行の位置が動かないようにする。
   //
   // 対象外（標高が足りない・氷点下にならない等）だけ最後へ回す。
   // その行はセルが無く1本のメッセージになるので、間に挟まると表が分断される。

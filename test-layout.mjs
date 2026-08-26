@@ -103,18 +103,19 @@ console.log("== 長い名前が3行に割れない ==");
 ok(/word-break: keep-all/.test(html), "表の行ラベルは空白でだけ折り返す");
 ok(/meta\.short \|\| meta\.name/.test(html), "長い名前は短縮名を使う");
 
-console.log("== 現象の並びが一日の流れに沿う ==");
+console.log("== 現象の並びが似たもの同士で隣り合う ==");
 const core = fs.readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8");
 const orderOf = (key) => {
   const m = core.match(new RegExp(key + ': \\{ name: "[^"]+", icon: "[^"]+", order: (\\d+)'));
   return m ? Number(m[1]) : null;
 };
-const seq = ["sunrise", "seaOfClouds", "rime", "diamondDust", "rainbow", "sunset", "starrySky"];
+const seq = ["sunrise", "sunset", "starrySky", "rainbow", "seaOfClouds", "rime", "diamondDust"];
 const got = seq.map(orderOf);
 ok(got.every((v, i) => v === i),
-  "朝焼け→雲海→霧氷→ダイヤモンドダスト→虹→夕焼け→星空 の順",
+  "朝焼け→夕焼け→星空→虹→雲海→霧氷→ダイヤモンドダスト の順",
   got.join(","));
-ok(orderOf("sunrise") < orderOf("sunset"), "朝焼けが夕焼けより先");
+// 同じ判定（SunsetWx特許）で対になる2つ。離すと見比べられない。
+ok(orderOf("sunset") === orderOf("sunrise") + 1, "朝焼けの次が夕焼け");
 ok(/short: "\u30c0\u30a4\u30e4\u30e2\u30f3\u30c9 \u30c0\u30b9\u30c8"/.test(core),
   "ダイヤモンドダストの短縮名がある");
 
