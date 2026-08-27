@@ -45,7 +45,7 @@
     .detail-wrap { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
                    gap: 0 22px; align-items: start; }
     /* 以前は左に一覧・右に詳細の2ペインだったが、一覧の役割は
-       「この先7日」のマトリクスが担うようになったのでやめた。
+       現象ごとのカードが担うようになったのでやめた。
        position:sticky も使わない。包含ブロックが記録カードの行まで伸びて
        週間の行が記録の上に描画される事故を起こしたうえ、
        要素がビューポートより高いと下端が読めなくなる。 */
@@ -240,7 +240,7 @@
   <div class="card" id="nowcast" hidden></div>
   <div id="status" class="card muted" hidden></div>
 
-  <!-- 一覧画面: この先7日をひと目で見る -->
+  <!-- 一覧画面: この地点の全現象を、7日ぶんまとめて見る -->
   <div id="listView">
     <div class="card" id="bestNote" hidden></div>
     <div id="cards"></div>
@@ -249,7 +249,7 @@
   <!-- 詳細画面: 1つの現象・1つの日を読む。別画面にして、
        スクロールで飛ばすのをやめた（表と詳細が混ざると読みにくい）。 -->
   <div id="detailView" hidden>
-    <button class="back" id="backBtn">← この先7日</button>
+    <button class="back" id="backBtn">← 一覧にもどる</button>
     <div id="detailPane"></div>
   </div>
 
@@ -285,8 +285,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827092018"></script>
-<script src="sorami-core.js?v=20260827092018"></script>
+<script src="spots.js?v=20260827092922"></script>
+<script src="sorami-core.js?v=20260827092922"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -390,7 +390,7 @@ let sightings = store.get("sorami.sightings", []);
 
 const WIDE = window.matchMedia("(min-width: 900px)");
 
-// 画面は2つ。一覧（この先7日）と詳細（1現象・1日）。
+// 画面は2つ。一覧（全現象×7日）と詳細（1現象・1日）。
 // 同じページにスクロールで並べていたが、表と詳細が混ざって読みにくかった。
 // 場所は URL のハッシュに持つので、ブラウザの戻るがそのまま効く。
 //   #            → 一覧
@@ -548,7 +548,7 @@ function render() {
 
 // ---------------------------------------------------------------- 画面の行き来
 //
-// 一覧（この先7日）と詳細（1現象・1日）の2画面。同じページにスクロールで
+// 一覧（全現象×7日）と詳細（1現象・1日）の2画面。同じページにスクロールで
 // 並べていたが、表と詳細が混ざって読みにくかった。
 // 場所は URL のハッシュに持つので、ブラウザの戻るがそのまま効く。
 //   #             → 一覧
@@ -808,7 +808,8 @@ function renderDetail(id, sel, now, opts = {}) {
 }
 
 function renderWeek(id, entries, sel, now) {
-  return `<div style="padding:2px 0 6px"><div class="section-h"><h2>週間</h2></div>` + entries.map((e) => {
+  return `<div style="padding:2px 0 6px"><div class="section-h"><h2>ほかの日</h2>
+    <span class="tiny">押すとその日に切り替わります</span></div>` + entries.map((e) => {
     const ev = e.evaluation;
     if (ev.unavailable) {
       return `<div class="wk"><span class="d">${S.JstCal.relativeDay(e.dayMs, now)}</span>
