@@ -8,7 +8,18 @@
 (function (global) {
   "use strict";
 
-  const JST_OFFSET = 9 * 3600 * 1000;
+  // 暦は【見ている地点の時差】で動かす。
+  //
+  // 日本固定にしていたが、地点検索は OpenStreetMap で世界中を引ける。
+  // 海外を選ぶと「今日／明日」の区切りが日本時間のままずれた。
+  // Open-Meteo は timezone=auto を付けているので、その地点の時差を
+  // utc_offset_seconds で返してくる。使っていなかっただけ。
+  //
+  // 既定は +9時間。地点の時差が分かるまで（＝最初の取得が終わるまで）は日本として扱う。
+  let tzOffset = 9 * 3600 * 1000;
+  function setTimezoneOffset(seconds) {
+    if (typeof seconds === "number" && Number.isFinite(seconds)) tzOffset = seconds * 1000;
+  }
   const DEG = Math.PI / 180;
 
   // ---------------------------------------------------------------- Geo
@@ -34,27 +45,27 @@
 
   // ---------------------------------------------------------------- JST 暦
   // JST は夏時間が無いので固定 +9h で暦日計算ができる。
-  const JstCal = {
-    startOfDay(ms) { return Math.floor((ms + JST_OFFSET) / 86400000) * 86400000 - JST_OFFSET; },
+  const Cal = {
+    startOfDay(ms) { return Math.floor((ms + tzOffset) / 86400000) * 86400000 - tzOffset; },
     addDays(ms, n) { return ms + n * 86400000; },
     setHour(dayStartMs, hour) { return dayStartMs + hour * 3600000; },
-    sameDay(a, b) { return JstCal.startOfDay(a) === JstCal.startOfDay(b); },
+    sameDay(a, b) { return Cal.startOfDay(a) === Cal.startOfDay(b); },
     hhmm(ms) {
-      const d = new Date(ms + JST_OFFSET);
+      const d = new Date(ms + tzOffset);
       return `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
     },
     // 表示は分に四捨五入。切り捨てると暦の表記と1分ずれる。
-    hhmmRounded(ms) { return JstCal.hhmm(Math.round(ms / 60000) * 60000); },
+    hhmmRounded(ms) { return Cal.hhmm(Math.round(ms / 60000) * 60000); },
     monthDay(ms) {
-      const d = new Date(ms + JST_OFFSET);
+      const d = new Date(ms + tzOffset);
       return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
     },
-    weekday(ms) { return "日月火水木金土"[new Date(ms + JST_OFFSET).getUTCDay()]; },
+    weekday(ms) { return "日月火水木金土"[new Date(ms + tzOffset).getUTCDay()]; },
     relativeDay(ms, nowMs) {
-      const target = JstCal.startOfDay(ms), today = JstCal.startOfDay(nowMs);
+      const target = Cal.startOfDay(ms), today = Cal.startOfDay(nowMs);
       if (target === today) return "今日";
       if (target === today + 86400000) return "明日";
-      return `${JstCal.monthDay(ms)}(${JstCal.weekday(ms)})`;
+      return `${Cal.monthDay(ms)}(${Cal.weekday(ms)})`;
     },
   };
 
@@ -143,7 +154,7 @@
     // 反復のたびに取り直すと JST では基準日が 1 日ずつ後退する（Swift 版で実際に踏んだバグ）。
     eventTime(eventName, dayMs, lat, lon) {
       const spec = Sun.EVENTS[eventName];
-      const noonLocal = JstCal.setHour(JstCal.startOfDay(dayMs), 12);
+      const noonLocal = Cal.setHour(Cal.startOfDay(dayMs), 12);
       const anchor = Math.floor(Sun.julianDay(noonLocal) - 0.5) + 0.5;
       let guess = noonLocal;
       for (let i = 0; i < 3; i++) {
@@ -600,6 +611,9 @@
       fetchAir(lat, lon, days),
       fetchEnsemble(lat, lon, days),
     ]);
+    // 地点の時差を暦へ反映する。以降の「今日／明日」はその地点の暦で動く。
+    const homeMeta = Array.isArray(homeRaw) ? homeRaw[0] : homeRaw;
+    if (homeMeta) setTimezoneOffset(homeMeta.utc_offset_seconds);
     const asList = (raw) => (Array.isArray(raw) ? raw : [raw]).map(decodeLocation);
     const toOffsets = (list) => Object.fromEntries(CLOUD_LAYERS.map((l, i) => [l.key, list[i]]));
     return {
@@ -609,6 +623,8 @@
       air,
       ensemble,
       sunsetBearing, sunriseBearing,
+      utcOffsetSeconds: homeMeta ? homeMeta.utc_offset_seconds : null,
+      timezone: homeMeta ? homeMeta.timezone : null,
       fetchedAt: now,
     };
   }
@@ -902,7 +918,7 @@
   const starrySkyScorer = {
     id: "starrySky", source: T.starry.source,
     window(dayMs, input) {
-      const nextDay = JstCal.addDays(dayMs, 1);
+      const nextDay = Cal.addDays(dayMs, 1);
       const pairs = [["astronomicalDusk", "astronomicalDawn"], ["nauticalDusk", "nauticalDawn"], ["civilDusk", "civilDawn"]];
       for (const [dusk, dawn] of pairs) {
         const s = Sun.eventTime(dusk, dayMs, input.lat, input.lon);
@@ -1056,8 +1072,8 @@
       if (!input.terrain && input.elevation < s.minElevation) {
         return unavailable("terrain", `標高 ${Math.round(input.elevation)}m。雲海を見下ろすには低すぎます`);
       }
-      const todayStart = JstCal.startOfDay(ws);
-      const prevStart = JstCal.addDays(todayStart, -1);
+      const todayStart = Cal.startOfDay(ws);
+      const prevStart = Cal.addDays(todayStart, -1);
       const previousMax = series.max("temperature_2m", prevStart, todayStart);
       if (previousMax === null) return unavailable("missingData", "前日の気温が得られませんでした（過去分の取得が必要）");
       const todayMin = series.min("temperature_2m", todayStart, we);
@@ -1137,12 +1153,12 @@
   const diamondDustScorer = {
     id: "diamondDust", source: T.diamondDust.source,
     window(dayMs, input) {
-      const start = JstCal.setHour(JstCal.startOfDay(dayMs), T.diamondDust.windowStart);
-      return [start, JstCal.setHour(JstCal.startOfDay(dayMs), T.diamondDust.windowEnd)];
+      const start = Cal.setHour(Cal.startOfDay(dayMs), T.diamondDust.windowStart);
+      return [start, Cal.setHour(Cal.startOfDay(dayMs), T.diamondDust.windowEnd)];
     },
     score(window, input) {
       const s = T.diamondDust, series = input.home, [ws, we] = window;
-      const dayStart = JstCal.startOfDay(ws);
+      const dayStart = Cal.startOfDay(ws);
       const minTemp = series.min("temperature_2m", dayStart, we);
       if (minTemp === null) return unavailable("missingData", "気温が得られませんでした");
       if (minTemp > 0) return unavailable("outOfSeason", `最低気温 ${f1(minTemp)}℃。氷点下になりません`);
@@ -1178,8 +1194,8 @@
   const rimeScorer = {
     id: "rime", source: T.rime.source,
     window(dayMs) {
-      const d = JstCal.startOfDay(dayMs);
-      return [JstCal.setHour(d, 0), JstCal.setHour(d, 9)];
+      const d = Cal.startOfDay(dayMs);
+      return [Cal.setHour(d, 0), Cal.setHour(d, 9)];
     },
     score(window, input) {
       const s = T.rime, series = input.home, [ws, we] = window;
@@ -1464,7 +1480,7 @@
     const low = Math.min(...scores), high = Math.max(...scores);
     // 何日先か。先の日ほど、モデルが揃っていても当たらない。
     const daysAhead = Math.max(0, Math.round(
-      (JstCal.startOfDay(dayMs) - JstCal.startOfDay(Date.now())) / 86400000));
+      (Cal.startOfDay(dayMs) - Cal.startOfDay(Date.now())) / 86400000));
 
     let representative = evaluated[0];
     for (const entry of evaluated) {
@@ -1525,7 +1541,7 @@
   function evaluateWeek(scorerId, bundle, place, days = 7, nowMs = Date.now()) {
     const out = [];
     for (let i = 0; i < days; i++) {
-      const dayMs = JstCal.addDays(JstCal.startOfDay(nowMs), i);
+      const dayMs = Cal.addDays(Cal.startOfDay(nowMs), i);
       const e = evaluate(scorerId, dayMs, bundle, place);
       if (e) out.push({ dayMs, evaluation: e });
     }
@@ -1626,7 +1642,7 @@
       return out;
     },
     blockURL(stationId, ms) {
-      const d = new Date(ms + JST_OFFSET);
+      const d = new Date(ms + tzOffset);
       const day = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
       const block = Math.floor(d.getUTCHours() / 3) * 3;
       return `${Amedas.base}/data/point/${stationId}/${day}_${String(block).padStart(2, "0")}.json`;
@@ -1650,7 +1666,7 @@
         const e = raw[latest];
         const y = +latest.slice(0, 4), mo = +latest.slice(4, 6), da = +latest.slice(6, 8);
         const hh = +latest.slice(8, 10), mi = +latest.slice(10, 12);
-        const observedAt = Date.UTC(y, mo - 1, da, hh, mi) - JST_OFFSET;
+        const observedAt = Date.UTC(y, mo - 1, da, hh, mi) - tzOffset;
         return {
           station, distanceKm, observedAt,
           temperature: Amedas.qcValue(e, "temp"),
@@ -1773,11 +1789,11 @@
   };
 
   const Sorami = {
-    Geo, JstCal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
+    Geo, Cal, JstCal: Cal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
     HOME_VARS, OFFSET_VARS, PROFILE_LEVELS, PROFILE_VARS, needsProfile,
     CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
-    rankOf, confidenceOf, confidenceOfEnsemble, phrasing, leadTimePenalty,
+    setTimezoneOffset, rankOf, confidenceOf, confidenceOfEnsemble, phrasing, leadTimePenalty,
     ensembleSpread, fetchEnsemble, ENSEMBLE_VARS, ENSEMBLE_MEMBERS, ENSEMBLE_MODEL,
     SPREAD_TO_EXPECTED_ERROR, rankAgreement,
     Amedas, Nowcast, LightPollution,

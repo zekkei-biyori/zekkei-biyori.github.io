@@ -285,8 +285,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827105523"></script>
-<script src="sorami-core.js?v=20260827105523"></script>
+<script src="spots.js?v=20260827121056"></script>
+<script src="sorami-core.js?v=20260827121056"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -469,6 +469,16 @@ function render() {
   if (place.subtitle) subParts.push(place.subtitle);
   const elev = place.elevation ?? bundle?.home.grid.elevation;
   if (elev !== null && elev !== undefined) subParts.push(`標高 ${Math.round(elev)}m`);
+  // 時刻はすべて【その地点の現地時間】。端末の時差と違うときは、そう書かないと
+  // 「今日 18:44」を自分の時計の時刻だと読んでしまう。
+  if (bundle && bundle.utcOffsetSeconds !== null && bundle.utcOffsetSeconds !== undefined) {
+    const deviceOffset = -new Date().getTimezoneOffset() * 60;
+    const diffHours = (bundle.utcOffsetSeconds - deviceOffset) / 3600;
+    if (Math.abs(diffHours) >= 0.5) {
+      const h = Math.abs(diffHours) % 1 === 0 ? Math.abs(diffHours) : Math.abs(diffHours).toFixed(1);
+      subParts.push(`時刻は現地時間（お使いの端末より${h}時間${diffHours > 0 ? "先" : "前"}）`);
+    }
+  }
   $("placeSub").textContent = subParts.join(" ・ ");
 
   // 次の見どころ: 36時間以内・評価済み・未来の回のうち最高スコア
