@@ -86,6 +86,17 @@ ok(/delete selectedDay\[route\.id\]/.test(html),
   "#/sunset を開いたら前に見ていた日を持ち越さない");
 
 
+console.log("== 光の時間を出す ==");
+// 写真を撮りに行くなら、点数より先に要る情報。
+ok(/function renderLightTimes/.test(html), "renderLightTimes がある");
+ok(/renderLightTimes\(sel\.dayMs, now\)/.test(html), "選んだ日の光の時間を出す");
+ok(/lightWindows/.test(html), "太陽の高度から求めている");
+const core2 = fs.readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8");
+// 写真分野の標準的な定義。ゴールデン −4°〜+6°、ブルー −6°〜−4°。
+ok(/goldenDawn: \{ zenith: 84/.test(core2), "ゴールデンアワーの上端は太陽高度 +6°");
+ok(/lowSunDawn: \{ zenith: 94/.test(core2), "ゴールデンアワーの下端は太陽高度 −4°");
+ok(/civilDawn: \{ zenith: 96/.test(core2), "ブルーアワーの下端は太陽高度 −6°");
+
 console.log("== 記録は0件のとき畳む ==");
 ok(/id="recEmpty"/.test(html) && /id="recBody"/.test(html), "空表示と本体が分かれている");
 ok(/\$\("recBody"\)\.hidden = empty/.test(html), "0件なら本体を隠す");

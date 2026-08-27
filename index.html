@@ -94,6 +94,12 @@
   .more > summary::before { content: "▸"; color: var(--secondary); font-size: 0.81rem; }
   .more[open] > summary::before { content: "▾"; }
 
+  /* 光の時間。朝と夕を2列に並べる。 */
+  .lt { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 12px;
+        font-size: 0.81rem; font-variant-numeric: tabular-nums; align-items: baseline; }
+  .lt .lt-h { font-size: 0.72rem; color: var(--tertiary); }
+  .lt .lt-l { color: var(--secondary); white-space: nowrap; }
+
   .back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
           color: var(--accent); font-size: 0.88rem; padding: 0 2px; margin-bottom: 2px; }
 
@@ -285,8 +291,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827121056"></script>
-<script src="sorami-core.js?v=20260827121056"></script>
+<script src="spots.js?v=20260827122821"></script>
+<script src="sorami-core.js?v=20260827122821"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -675,6 +681,30 @@ function renderPhenomenonCards(order, now) {
   }).join("");
 }
 
+// その日の光の時間。写真を撮りに行くなら、点数より先に要る情報。
+//
+// ゴールデンアワー … 太陽高度 −4°〜+6°。低い日差しで色が乗る
+// ブルーアワー     … 太陽高度 −6°〜−4°。空が深い青に沈み、街明かりと釣り合う
+// どちらも写真分野の標準的な定義に合わせている。
+function renderLightTimes(dayMs, now) {
+  const w = S.Sun.lightWindows(dayMs, place.latitude, place.longitude);
+  if (w.sunrise === null && w.sunset === null) return "";
+  const t = (x) => (x === null ? "—" : S.Cal.hhmmRounded(x));
+  const range = (x) => (x === null ? "—" : `${S.Cal.hhmmRounded(x[0])}–${S.Cal.hhmmRounded(x[1])}`);
+  return `<div class="card">
+    <div class="section-h"><h2>光の時間</h2>
+      <span class="tiny">${esc(S.Cal.relativeDay(dayMs, now))}</span></div>
+    <div class="lt">
+      <span class="lt-h"></span><span class="lt-h">朝</span><span class="lt-h">夕</span>
+      <span class="lt-l">ブルーアワー</span><span>${range(w.blueMorning)}</span><span>${range(w.blueEvening)}</span>
+      <span class="lt-l">ゴールデンアワー</span><span>${range(w.goldenMorning)}</span><span>${range(w.goldenEvening)}</span>
+      <span class="lt-l">日の出・日の入り</span><span>${t(w.sunrise)}</span><span>${t(w.sunset)}</span>
+    </div>
+    <p class="tiny" style="margin-top:6px">ゴールデンアワーは太陽高度 −4°〜+6°、ブルーアワーは −6°〜−4°。
+      日の出前・日の入り後は、空が明るいうちに街明かりと釣り合います。</p>
+  </div>`;
+}
+
 /// 選択中の現象の詳細。
 ///
 /// 現象を選ぶプルダウンは置かない。画面を分けたので、別の現象を見たいときは
@@ -706,6 +736,7 @@ function renderDetailPane(id, now) {
       <div style="margin-top:9px">${esc(S.phrasing(id, ev.rank).say)}</div>
       <div class="tiny" style="margin-top:4px">${CONF_ICON[ev.confidence.key]} ${esc(confidenceText(ev))}</div></div>`;
   return `<div data-id="${id}">${head}
+    ${renderLightTimes(sel.dayMs, now)}
     <div class="detail-wrap">
       <div class="detail-main"><div class="card">${renderDetail(id, sel, now)}</div></div>
       <div class="detail-side">

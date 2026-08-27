@@ -143,6 +143,24 @@
       civilDawn: { zenith: 96, morning: true }, civilDusk: { zenith: 96, morning: false },
       nauticalDawn: { zenith: 102, morning: true }, nauticalDusk: { zenith: 102, morning: false },
       astronomicalDawn: { zenith: 108, morning: true }, astronomicalDusk: { zenith: 108, morning: false },
+      // 写真の光。天頂角 = 90 − 太陽高度。
+      //   ゴールデンアワー … 高度 −4°〜+6°（天頂角 94〜84）
+      //   ブルーアワー     … 高度 −6°〜−4°（天頂角 96〜94。96 は市民薄明と同じ）
+      goldenDawn: { zenith: 84, morning: true }, goldenDusk: { zenith: 84, morning: false },
+      lowSunDawn: { zenith: 94, morning: true }, lowSunDusk: { zenith: 94, morning: false },
+    },
+
+    /// その日の光の時間帯。極夜・白夜では太陽がその高度に届かず null になる。
+    lightWindows(dayMs, lat, lon) {
+      const at = (name) => Sun.eventTime(name, dayMs, lat, lon);
+      const pair = (a, b) => { const x = at(a), y = at(b); return x !== null && y !== null ? [x, y] : null; };
+      return {
+        sunrise: at("sunrise"), sunset: at("sunset"),
+        goldenMorning: pair("lowSunDawn", "goldenDawn"),
+        goldenEvening: pair("goldenDusk", "lowSunDusk"),
+        blueMorning: pair("civilDawn", "lowSunDawn"),
+        blueEvening: pair("lowSunDusk", "civilDusk"),
+      };
     },
     hourAngle(zenith, lat, decl) {
       const cosH = (Math.cos(zenith * DEG) - Math.sin(lat * DEG) * Math.sin(decl * DEG))
