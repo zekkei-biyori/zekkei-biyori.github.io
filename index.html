@@ -8,15 +8,21 @@
 <meta name="apple-mobile-web-app-title" content="絶景日和">
 <title>絶景日和</title>
 <style>
+  /* 配色はカード地に対するコントラストを実測して決めている。
+     文字として使う色は 4.5:1 以上（WCAG AA の本文基準）。
+     以前はライトモードで 良好 2.60・平凡 2.42・補助文 2.21 と、
+     大きな文字の基準 3.0 すら下回っていた。 */
   :root {
-    --bg: #f4f4f6; --card: #ffffff; --text: #1c1c1e; --secondary: #6e6e73; --tertiary: #aeaeb2;
-    --accent: #f08529; --line: rgba(0,0,0,.08);
-    --spectacular: #d93d4a; --good: #f08529; --fair: #c9a227; --poor: #8c8c8c;
+    --bg: #f4f4f6; --card: #ffffff; --text: #1c1c1e; --secondary: #6e6e73; --tertiary: #76767c;
+    --accent: #ba5d0d; --line: rgba(0,0,0,.08);
+    --spectacular: #d83946; --good: #ba5d0d; --fair: #8d721b; --poor: #767676;
     --red: #d0342c; --orange: #d98a1f;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --secondary: #98989f; --tertiary: #636366;
-            --line: rgba(255,255,255,.1); --fair: #d4b247; }
+    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --secondary: #98989f; --tertiary: #838386;
+            --line: rgba(255,255,255,.1);
+            --accent: #f08529; --spectacular: #de5762; --good: #f08529; --fair: #d4b247;
+            --poor: #8c8c8c; --red: #db5b54; }
   }
   * { box-sizing: border-box; margin: 0; }
   body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
@@ -80,6 +86,13 @@
   /* 見たいものを選ぶプルダウン。ネイティブの select を使う。
      iOS ではホイール、Android ではリストと、端末に馴染んだ出方になるし、
      キーボード操作も読み上げも自前で用意しなくて済む。 */
+  /* 「もっと詳しく」。決めるのに要らないものは畳んでおく。 */
+  .more > summary { list-style: none; cursor: pointer; font-weight: 700; font-size: 0.88rem;
+                    display: flex; align-items: center; gap: 6px; min-height: 32px; }
+  .more > summary::-webkit-details-marker { display: none; }
+  .more > summary::before { content: "▸"; color: var(--secondary); font-size: 0.81rem; }
+  .more[open] > summary::before { content: "▾"; }
+
   .back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
           color: var(--accent); font-size: 0.88rem; padding: 0 2px; margin-bottom: 2px; }
 
@@ -271,8 +284,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260826193027"></script>
-<script src="sorami-core.js?v=20260826193027"></script>
+<script src="spots.js?v=20260827090639"></script>
+<script src="sorami-core.js?v=20260827090639"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -683,7 +696,8 @@ function renderDetailPane(id, now) {
       <div class="detail-main"><div class="card">${renderDetail(id, sel, now)}</div></div>
       <div class="detail-side">
         <div class="card">${renderWeek(id, entries, sel, now)}</div>
-        <div class="card">${renderDetail(id, sel, now, { part: "how" })}${renderTable(id, entries)}</div>
+        <details class="card more"><summary>もっと詳しく</summary>
+          ${renderDetail(id, sel, now, { part: "how" })}${renderTable(id, entries)}</details>
         <p class="tiny" style="padding:0 4px">📖 ${esc(ev.source)}</p>
       </div>
     </div></div>`;
@@ -743,7 +757,12 @@ function renderDetail(id, sel, now, opts = {}) {
   const maxAbs = Math.max(1, ...ev.factors.map((f) => Math.abs(f.c)));
   const maxPos = Math.max(0.01, ...ev.factors.map((f) => f.c));
   const maxNeg = Math.max(0.01, ...ev.factors.map((f) => -f.c));
-  const factors = ev.factors.map((f) => {
+  // 寄与がほぼ 0 の要素は「効かなかった」ことしか言っていない。
+  // 1行ずつ並べると、効いた要素が埋もれる。名前だけまとめて1行にする。
+  const NEGLIGIBLE = 0.05;
+  const moved = ev.factors.filter((f) => Math.abs(f.c) >= NEGLIGIBLE);
+  const idle = ev.factors.filter((f) => Math.abs(f.c) < NEGLIGIBLE);
+  const factors = moved.map((f) => {
     const pos = f.c >= 0, w = Math.min(50, 50 * Math.abs(f.c) / maxAbs);
     const mk = factorMark(f.c, maxPos, maxNeg);
     return `<div class="f"><div class="fh">
@@ -779,6 +798,8 @@ function renderDetail(id, sel, now, opts = {}) {
   return `<div style="padding:4px 0 6px">
     <div class="section-h"><h2>この点数のわけ</h2><span class="tiny">基準 ${Math.round(ev.base)} → ${Math.round(ev.score)}</span></div>
     <div class="factors">${factors}</div>
+    ${idle.length ? `<p class="tiny" style="padding:2px 0 0">効かなかった要素: ${
+      idle.map((f) => esc(f.label)).join("、")}</p>` : ""}
     ${record}
   </div>`;
 }
@@ -816,12 +837,13 @@ function renderTable(id, entries) {
       <td>${r.visibility === null || r.visibility === undefined ? "—" : Math.round(r.visibility / 1000) + "km"}</td></tr>`;
   }).join("");
   if (!rows) return "";
-  return `<details style="padding:4px 0"><summary class="muted" style="cursor:pointer">詳しい数値</summary>
+  return `<div style="padding:4px 0">
+    <div class="section-h" style="margin-top:8px"><h2>日ごとの数値</h2></div>
     <div class="scrollx"><table class="numbers">
     <tr><th></th><th>点</th><th>低層</th><th>中層</th><th>高層</th>
     ${hasSunward ? "<th>陽低</th><th>陽中</th><th>陽高</th>" : ""}
     <th>降水</th><th>湿度</th><th>気温</th><th>視程</th></tr>${rows}</table></div>
-    <p class="tiny">モデル横断の中央値。「陽側」は太陽方位へ低層165km・中層260km・高層368km離れた地点の雲量。</p></details>`;
+    <p class="tiny">モデル横断の中央値。「陽側」は太陽方位へ低層165km・中層260km・高層368km離れた地点の雲量。</p></div>`;
 }
 
 // ---------------------------------------------------------------- 記録・校正
