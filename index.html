@@ -49,8 +49,9 @@
        position:sticky も使わない。包含ブロックが記録カードの行まで伸びて
        週間の行が記録の上に描画される事故を起こしたうえ、
        要素がビューポートより高いと下端が読めなくなる。 */
-    /* 広い側では数値表が収まるので横スクロールを出さない */
-    .detail-side .scrollx { overflow-x: visible; }
+    /* 数値表は狭い側と同じく横スクロールさせる。
+       2ペイン時代は右側が広く収まっていたが、いまの列幅（約493px）に対して
+       表は約539px 必要で、visible にすると視程の列が枠の外へ出る。 */
     .detail-side table.numbers { width: 100%; }
   }
   h1 { font-size: 1.13rem; text-align: center; padding: 6px 0 10px; }
@@ -284,8 +285,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827090639"></script>
-<script src="sorami-core.js?v=20260827090639"></script>
+<script src="spots.js?v=20260827092018"></script>
+<script src="sorami-core.js?v=20260827092018"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -329,7 +330,7 @@ function confidenceText(ev) {
   // 日数の注意は残す。アンサンブルのばらつきは日数とともに広がるが、
   // 数日先のスコア誤差そのものは検証できていないため、言葉で補う。
   if (d >= 5) parts.push(`${d}日先なので、日が近づいたら見直してください`);
-  else if (d >= 2) parts.push(`${d}日先の予報です`);
+  else if (d >= 2) parts.push(`${d}日先の予測です`);
   return parts.join("。");
 }
 // 51メンバーの散らばりを見せる。「信頼度 中」と言われるより、
@@ -530,7 +531,7 @@ function render() {
   }
   renderRecords();
   $("footer").innerHTML =
-    `${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} 時点の予報。`
+    `${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} 時点の予測。`
     + `${S.MODELS.length}つの数値予報モデル（${S.MODELS.map((m) => S.MODEL_NAMES[m]).join("・")}）の`
     + `真ん中の値を点数にしています。<br>`
     + (bundle && bundle.ensemble
@@ -539,7 +540,9 @@ function render() {
         : `${bundle ? "アンサンブル予報が取れなかったため、" : ""}`
           + `点数の確からしさはモデル間の見解の差から出しています。<br>`)
     + `夕焼け・朝焼けは、頭上だけでなく日の入り方向 ${bundle ? Math.round(bundle.sunsetBearing) : "—"}° の空の雲も見ています。<br>`
-    + `<strong>これは予報です。</strong>実際の空とは違うことがあります。見に行くかどうかの目安としてお使いください。<br>`
+    + `<strong>これは予測です。</strong>気象庁や ECMWF が出している予報を材料に、`
+    + `このアプリが独自に点数を付けたものです。実際の空とは違うことがあります。`
+    + `見に行くかどうかの目安としてお使いください。<br>`
     + `予報: Open-Meteo ／ 実況: 気象庁アメダス ／ 光害: <a href="https://djlorenz.github.io/astronomy/lp/">Lorenz Light Pollution Atlas 2025</a>（VIIRS） ／ 検索: OSM Nominatim ・ 国土地理院`;
 }
 

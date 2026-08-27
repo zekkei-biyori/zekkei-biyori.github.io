@@ -64,6 +64,36 @@ window.__audit = function () {
     }
   }
 
+  // 3-2) カードから横へはみ出している要素（孫まで見る）
+  //     直接の子しか見ていなかったため、数値表がカードから右へ62px出ていたのを
+  //     取り逃した。ページ全体の横スクロールも起きないので気づけなかった。
+  for (const card of document.querySelectorAll("main .card")) {
+    if (inClosedDetails(card)) continue;
+    const cr = card.getBoundingClientRect();
+    if (!cr.width) continue;
+    // 途中にスクロール枠（overflow-x が visible でない要素）があれば、
+    // はみ出して見えても実際にはクリップされている。数値表がこれに当たる。
+    const clipped = (el) => {
+      for (let e = el.parentElement; e && e !== card; e = e.parentElement) {
+        const ox = getComputedStyle(e).overflowX;
+        if (ox && ox !== "visible") return true;
+      }
+      return false;
+    };
+    for (const el of card.querySelectorAll("*")) {
+      if (inClosedDetails(el) || clipped(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const over = Math.round(Math.max(r.right - cr.right, cr.left - r.left));
+      if (over > 2) {
+        add("カードから横へはみ出し", { カード: card.id || card.className,
+          要素: el.tagName + "." + String(el.className || "").slice(0, 18),
+          はみ出し: over + "px" });
+        break;   // 同じ原因で子孫が芋づるに出るので、カードごと1件に絞る
+      }
+    }
+  }
+
   // 4) 文字が切れている（省略でなく物理的なはみ出し）
   for (const el of document.querySelectorAll("main h1, main h2, main .name, main .n, main .d, main .tiny, main .muted")) {
     if (el.scrollWidth > el.clientWidth + 2 && getComputedStyle(el).overflow !== "auto"
