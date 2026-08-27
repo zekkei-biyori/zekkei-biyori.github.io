@@ -285,8 +285,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827092922"></script>
-<script src="sorami-core.js?v=20260827092922"></script>
+<script src="spots.js?v=20260827093431"></script>
+<script src="sorami-core.js?v=20260827093431"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -808,7 +808,7 @@ function renderDetail(id, sel, now, opts = {}) {
 }
 
 function renderWeek(id, entries, sel, now) {
-  return `<div style="padding:2px 0 6px"><div class="section-h"><h2>ほかの日</h2>
+  return `<div style="padding:2px 0 6px"><div class="section-h"><h2>週間</h2>
     <span class="tiny">押すとその日に切り替わります</span></div>` + entries.map((e) => {
     const ev = e.evaluation;
     if (ev.unavailable) {

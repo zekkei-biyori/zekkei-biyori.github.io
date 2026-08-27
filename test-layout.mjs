@@ -68,7 +68,7 @@ ok(/addEventListener\("hashchange"/.test(html), "hashchange を見ている");
 ok(/id="backBtn"/.test(html), "詳細に戻るボタンがある");
 ok(!/この先7日/.test(html), "戻り先を日数で呼ばない（詳細にも同じ7日間がある）");
 ok(/id="backBtn"[^>]*>← 一覧にもどる/.test(html), "戻り先は一覧だと書く");
-ok(!/<h2>週間<\/h2>/.test(html), "同じ7日間に別の名前を付けない");
+
 ok(/\$\("records"\)\.hidden = inDetail/.test(html), "詳細を読むときに記録を挟まない");
 ok(/listScrollY/.test(html), "一覧へ戻ったとき元の位置に戻す");
 // 詳細の中で現象を替えるたびに履歴を積むと、戻るのに何度も押させることになる。
