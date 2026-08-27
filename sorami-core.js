@@ -968,11 +968,14 @@
   /// ほぼ 0 点になる（トマム山の「太平洋型」がこれ）。
   ///
   /// 断定はしない。データが支持している成因を名指しするだけ。
-  function cloudSeaKind({ range, wind, prevRain, nightCloud, humidity, month, hasInversion }) {
-    const calm = wind === null || wind < T.seaOfClouds.windFail;
-    const radiative = range >= T.seaOfClouds.rangeThreshold
-      && (nightCloud === null || nightCloud < T.seaOfClouds.nightCloudFail);
-    const rained = prevRain !== null && prevRain > T.seaOfClouds.prevRainMm;
+  function cloudSeaKind({ range, prevRain, nightCloud, humidity, month, hasInversion }) {
+    // 風は型の判別に使わない。展望台（尾根）の風は盆地底の風とは別の量で、
+    // 「できた雲海が崩れるか」の話であって「どの型ができるか」とは関係がない。
+    const s = T.seaOfClouds;
+    const radiative = range >= s.rangeThreshold
+      && (nightCloud === null || nightCloud < s.nightCloudFail);
+    const rained = prevRain !== null && prevRain > s.prevRainMm;
+    const damp = humidity !== null && humidity >= s.humidityThreshold;
 
     if (rained && radiative) {
       return { key: "afterRain", name: "雨上がりの雲海",
@@ -982,20 +985,23 @@
       return { key: "radiation", name: "放射霧",
                note: "晴れて冷え込んだ盆地にたまる、もっとも一般的な雲海です。局地的で比較的厚くなります" };
     }
-    if (rained && calm && humidity !== null && humidity >= T.seaOfClouds.humidityThreshold - 5) {
+    if (rained && damp) {
       return { key: "afterRain", name: "雨上がりの雲海",
-               note: "前日の雨で水蒸気が多く、風も弱い状態です。冷え込みは弱いので、出るかどうかは五分五分です" };
+               note: "前日の雨で水蒸気が多い状態です。ただし冷え込みは弱いので、出るかどうかは五分五分です" };
     }
     // 放射冷却が効いていないのに下層が飽和している。夏の北日本太平洋側などで、
     // 暖湿気が冷たい海の上を通って霧になる型（移流霧）がこれにあたる。
-    if (hasInversion && calm && humidity !== null && humidity >= T.seaOfClouds.humidityThreshold
-        && (month >= 5 && month <= 9)) {
+    if (hasInversion && damp && (month >= 5 && month <= 9)) {
       return { key: "advection", name: "移流霧かもしれません",
                note: "冷え込みは弱いのに下層が湿っています。暖かく湿った空気が冷たい海や地面の上を流れてできる型です" };
     }
-    if (humidity !== null && humidity >= T.seaOfClouds.humidityThreshold && calm) {
+    if (damp) {
       return { key: "damp", name: "湿りはあります",
                note: "空気は湿っていますが、冷え込みが足りません" };
+    }
+    if (range < s.rangeThreshold) {
+      return { key: "noCooling", name: "冷え込みが足りません",
+               note: "前日との気温差が小さく、霧のもとになる冷え込みがありません" };
     }
     return { key: "none", name: "条件が揃っていません", note: "" };
   }
@@ -1060,9 +1066,13 @@
       const factors = [];
       const range = previousMax - todayMin;
       const rangeFit = Curve.ramp(range, s.rangeThreshold - 3, s.rangeFull);
+      const nightCloudForText = series.mean("cloud_cover", todayStart, ws);
+      const cloudyNight = nightCloudForText !== null && nightCloudForText >= s.nightCloudFail;
       factors.push(factor(`気温差 ${f1(range)}℃`, rangeFit * s.rangeBonus,
         range > s.rangeThreshold
-          ? `前日最高 ${f1(previousMax)}℃ → 当日最低 ${f1(todayMin)}℃。放射冷却の目安 10.2℃ を超える`
+          ? (cloudyNight
+              ? `前日最高 ${f1(previousMax)}℃ → 当日最低 ${f1(todayMin)}℃。ただし夜間は曇っており、放射冷却ではなく寒気の入れ替わりによる差です`
+              : `前日最高 ${f1(previousMax)}℃ → 当日最低 ${f1(todayMin)}℃。放射冷却の目安 10.2℃ を超える`)
           : "放射冷却の目安 10.2℃ に届かない"));
       const wind = series.mean("wind_speed_10m", ws, we);
       if (wind !== null) {
@@ -1115,7 +1125,7 @@
 
       // 成因を名指しする。種類が見え方そのものになるので、点数だけより役に立つ。
       const kind = cloudSeaKind({
-        range, wind, prevRain, nightCloud, humidity,
+        range, prevRain, nightCloud, humidity,
         month: new Date(ws).getMonth() + 1,
         hasInversion: !!(inv && inv.height !== null),
       });
