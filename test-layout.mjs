@@ -86,6 +86,21 @@ ok(/delete selectedDay\[route\.id\]/.test(html),
   "#/sunset を開いたら前に見ていた日を持ち越さない");
 
 
+console.log("== 内容がぜんぶ同じ軸に乗る ==");
+// main を 1060px にして中身を 760px 左寄せにしていたため、
+// 全幅で中央寄せしていた見出しだけが 136px ずれていた。
+ok(!/main \{ max-width: 1060px/.test(html), "main と中身で別の幅を使わない");
+ok(!/#listView, main > \.card \{ max-width/.test(html), "要素ごとに幅を上書きしない");
+ok(!/\.place-row \{ max-width: 360px/.test(html), "地点だけ別の幅にしない");
+// 同じ詳細度なら後勝ち。メディアクエリを基本ルールより前に置くと打ち消される。
+const mediaAt = html.indexOf("@media (min-width: 900px)");
+const h1At = html.indexOf("  h1 { font-size:");
+ok(mediaAt > h1At, "メディアクエリを基本ルールより後ろに置く",
+  `media@${mediaAt} h1@${h1At}`);
+
+console.log("== 詳細も1本の列 ==");
+ok(!/detail-wrap/.test(html), "詳細を2列に分けていない");
+
 console.log("== 光の時間を出す ==");
 // 写真を撮りに行くなら、点数より先に要る情報。
 ok(/function renderLightTimes/.test(html), "renderLightTimes がある");
