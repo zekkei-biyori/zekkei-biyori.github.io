@@ -311,9 +311,30 @@
       source: "雲量・降水・月明かり（輝面比×高度）・視程・光害（Lorenz光害アトラス2025）から算出",
     },
     seaOfClouds: {
-      rangeThreshold: 10.2, rangeFull: 16, windCalm: 0.85, windFail: 2.5,
+      rangeThreshold: 10.2, rangeFull: 16,
+      // windCalm 0.85 は宙畑・秩父の決定木の第2分岐。ただしこれは
+      // 【秩父アメダス＝盆地底の観測値】で、アプリが読むのは
+      // 展望台（尾根）の予測値。同じ量ではない。
+      // 2025年11月の竹田城跡で 0.85 を下回った日は 30日中 0日（実測）。
+      // 30点ぶんの加点が事実上死んでいる。谷が静穏かどうかは、
+      // 逆転層の有無のほうが直接の証拠になる（aboveBonus）。
+      windCalm: 0.85, windFail: 2.5,
       prevRainMm: 0.5, humidityThreshold: 90, nightCloudClear: 30, nightCloudFail: 80,
-      minElevation: 250, base: 10, rangeBonus: 35, windBonus: 30,
+      minElevation: 250,
+    // 展望台が雲頂よりこれだけ高ければ「見下ろせる」。
+    // 面の間隔が 230m ほどあるので、余裕を持たせる。
+    aboveMargin: 100,
+    // 逆転とみなす気温の上がり幅[K]。数値の揺らぎを拾わない程度に。
+    inversionMinK: 0.3,
+    // これより上の逆転は雲海の天井ではない（境界層の外）。
+    inversionMaxHeight: 2500,
+    // 逆転層が展望台より下にあることは、雲海の直接の証拠。
+    // 谷が静穏で安定していなければ逆転層はできないので、
+    // 実質死んでいる風の条件（下記）を物理的に肩代わりする。
+    aboveBonus: 25,
+    // 見下ろせないときの上限。雲海の中に立つなら、条件が揃っていても見られない。
+    insideCeiling: 20, aboveCeilingFull: 100,
+ base: 10, rangeBonus: 35, windBonus: 30,
       humidityBonus: 12, prevRainBonus: 8, nightCloudBonus: 15,
       source: "宙畑・秩父の決定木（気温差>10.2℃ かつ 風速<0.85m/s）に基づく経験則。地形依存が大きい",
     },
@@ -416,6 +437,33 @@
     "relative_humidity_500hPa", "relative_humidity_300hPa", "relative_humidity_200hPa",
   ];
   const OFFSET_VARS = ["cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "precipitation"];
+
+  // 雲海のための鉛直分布。
+  //
+  // 雲海が見えるには3つ要る（三菱自動車「雲海の仕組み」）:
+  //   1. 低いところで霧ができる
+  //   2. 逆転層が天井になって雲頂高度が決まる
+  //   3. 観察者がその雲頂より高い位置にいる
+  // これまで 3 をまったく見ておらず、標高 250m 以上という粗い代理で済ませていた。
+  // 点数が高くても現地では霧の中に立っている、ということが起こり得た。
+  //
+  // 気圧面の湿度と高度から、飽和している層の上端＝雲頂高度を読む。
+  // エマグラムで逆転層の高さを読む手順を、数値でやっているのと同じ。
+  //
+  // 気象庁MSM・ICON・GFS は 975/950/900hPa（≈300/530/1010m）も返す。
+  // ECMWF は 1000/925/850 だけなので、そのモデルでは粗い推定になる（実測確認済み）。
+  const PROFILE_LEVELS = [1000, 975, 950, 925, 900, 850];
+  const PROFILE_VARS = PROFILE_LEVELS.flatMap((l) => [
+    `geopotential_height_${l}hPa`, `relative_humidity_${l}hPa`, `temperature_${l}hPa`,
+  ]).filter((v) => !HOME_VARS.includes(v));
+
+  // 雲海を見下ろせる可能性がある地点でだけ取る。平地では丸ごと不要。
+  function needsProfile(place) {
+    if (!place) return false;
+    if (["basinFloor", "plain", "coast"].includes(place.terrain)) return false;
+    if (place.terrain) return true;
+    return (place.elevation ?? 0) >= T.seaOfClouds.minElevation;
+  }
   // 大気組成（CAMS）。夕焼けの色はレイリー散乱・オゾン吸収・エアロゾル消散で決まる。
   // 出典: A New Twilight Sky Color Prediction Model Based on Machine Learning Methods,
   //       J. Appl. Meteor. Climatol. 65(5), 2026. doi:10.1175/JAMC-D-25-0206.1
@@ -454,7 +502,8 @@
     const byModel = {};
     for (const model of MODELS) {
       const columns = {};
-      for (const v of HOME_VARS) {
+      // 鉛直分布は地点によって要求していないので、来ていれば拾う形にする。
+      for (const v of [...HOME_VARS, ...PROFILE_VARS]) {
         const c = payload.hourly[`${v}_${model}`];
         if (c) columns[v] = c;
       }
@@ -535,7 +584,7 @@
     } catch { return null; }
   }
 
-  async function fetchForecast(lat, lon, days = 8) {
+  async function fetchForecast(lat, lon, days = 8, place = null) {
     const now = Date.now();
     const sunsetAt = Sun.eventTime("sunset", now, lat, lon);
     const sunriseAt = Sun.eventTime("sunrise", now, lat, lon);
@@ -544,7 +593,8 @@
     const offsetsFor = (bearing) => CLOUD_LAYERS.map((l) => Geo.destination(lat, lon, bearing, l.offsetKm));
 
     const [homeRaw, sunsetRaw, sunriseRaw, air, ensemble] = await Promise.all([
-      fetchJSON(buildURL([{ latitude: lat, longitude: lon }], HOME_VARS, days, 1)),
+      fetchJSON(buildURL([{ latitude: lat, longitude: lon }],
+        needsProfile(place) ? [...HOME_VARS, ...PROFILE_VARS] : HOME_VARS, days, 1)),
       fetchJSON(buildURL(offsetsFor(sunsetBearing), OFFSET_VARS, days, 0)),
       fetchJSON(buildURL(offsetsFor(sunriseBearing), OFFSET_VARS, days, 0)),
       fetchAir(lat, lon, days),
@@ -907,6 +957,84 @@
     },
   };
 
+  /// 雲海の成因を推定する。種類が見え方そのものになる。
+  ///
+  /// 出典: 三菱自動車「雲海の種類」（6分類）
+  ///   https://www.mitsubishi-motors.co.jp/special/weekend-explorer/unkai/kind.html
+  ///
+  /// これまでは放射霧だけを想定し、前日の雨を「放射霧への加点」として混ぜていた。
+  /// だが雨上がりの雲海は別の型で、水蒸気が既にあるぶん放射冷却への要求が軽い。
+  /// 移流霧にいたっては放射冷却を必要としないので、気温差を主軸にした判定では
+  /// ほぼ 0 点になる（トマム山の「太平洋型」がこれ）。
+  ///
+  /// 断定はしない。データが支持している成因を名指しするだけ。
+  function cloudSeaKind({ range, wind, prevRain, nightCloud, humidity, month, hasInversion }) {
+    const calm = wind === null || wind < T.seaOfClouds.windFail;
+    const radiative = range >= T.seaOfClouds.rangeThreshold
+      && (nightCloud === null || nightCloud < T.seaOfClouds.nightCloudFail);
+    const rained = prevRain !== null && prevRain > T.seaOfClouds.prevRainMm;
+
+    if (rained && radiative) {
+      return { key: "afterRain", name: "雨上がりの雲海",
+               note: "前日の雨が残した水蒸気が、冷え込みで霧になります。境界のはっきりした雲海になりやすい型です" };
+    }
+    if (radiative) {
+      return { key: "radiation", name: "放射霧",
+               note: "晴れて冷え込んだ盆地にたまる、もっとも一般的な雲海です。局地的で比較的厚くなります" };
+    }
+    if (rained && calm && humidity !== null && humidity >= T.seaOfClouds.humidityThreshold - 5) {
+      return { key: "afterRain", name: "雨上がりの雲海",
+               note: "前日の雨で水蒸気が多く、風も弱い状態です。冷え込みは弱いので、出るかどうかは五分五分です" };
+    }
+    // 放射冷却が効いていないのに下層が飽和している。夏の北日本太平洋側などで、
+    // 暖湿気が冷たい海の上を通って霧になる型（移流霧）がこれにあたる。
+    if (hasInversion && calm && humidity !== null && humidity >= T.seaOfClouds.humidityThreshold
+        && (month >= 5 && month <= 9)) {
+      return { key: "advection", name: "移流霧かもしれません",
+               note: "冷え込みは弱いのに下層が湿っています。暖かく湿った空気が冷たい海や地面の上を流れてできる型です" };
+    }
+    if (humidity !== null && humidity >= T.seaOfClouds.humidityThreshold && calm) {
+      return { key: "damp", name: "湿りはあります",
+               note: "空気は湿っていますが、冷え込みが足りません" };
+    }
+    return { key: "none", name: "条件が揃っていません", note: "" };
+  }
+
+  /// 気圧面の気温分布から【逆転層の底】を読む。そこが雲海の天井になる。
+  ///
+  /// エマグラムで雲海を読む手順そのもの。逆転層より上には雲が育たないので、
+  /// その高さより上に立てば見下ろせる（三菱自動車「雲海の仕組み」条件2・3）。
+  ///
+  /// 【モデルに霧そのものを予測させない】のが要点。
+  /// 最初は「気圧面の湿度が90%以上の層＝雲」として雲頂を取ろうとしたが、
+  /// 放射霧は 5km 格子・面の間隔 230m のモデルが解像できないほど浅く局地的で、
+  /// 下層の湿度は霧の日でも 90% に届かない。
+  /// その条件を課したら雲海スポット10地点×7日のうち69件が「下層が乾いている」になり、
+  /// 全部 15点になった（実データで確認）。機能を殺していた。
+  ///
+  /// 霧ができるかは地上の条件（放射冷却・弱風・湿度）で判断し、
+  /// 分布からは【天井の高さ】だけを読む。役割を分ける。
+  function inversionBase(series, ws, we) {
+    const rows = [];
+    for (const l of PROFILE_LEVELS) {
+      const h = series.mean(`geopotential_height_${l}hPa`, ws, we);
+      const t = series.mean(`temperature_${l}hPa`, ws, we);
+      if (h === null || t === null) continue;
+      rows.push({ h, t });
+    }
+    if (rows.length < 3) return null;
+    rows.sort((a, b) => a.h - b.h);
+    const s = T.seaOfClouds;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].h > s.inversionMaxHeight) break;
+      if (rows[i].t > rows[i - 1].t + s.inversionMinK) {
+        // 逆転が始まる面の下端。ここが天井。
+        return { height: rows[i - 1].h, strength: rows[i].t - rows[i - 1].t, levels: rows.length };
+      }
+    }
+    return { height: null, strength: 0, levels: rows.length };
+  }
+
   const seaOfCloudsScorer = {
     id: "seaOfClouds", source: T.seaOfClouds.source,
     window(dayMs, input) {
@@ -940,7 +1068,8 @@
       if (wind !== null) {
         const calm = 1 - Curve.ramp(wind, s.windCalm, s.windFail);
         factors.push(factor(`風速 ${f1(wind)}m/s`, calm * s.windBonus,
-          wind < s.windCalm ? "ほぼ無風。雲海が崩れません" : "風があると雲海は流されます"));
+          wind < s.windCalm ? "ほぼ無風。雲海が崩れません"
+            : "風があると雲海は流されます（展望台の高さの風です。谷底はこれより弱いのが普通）"));
       }
       const humidity = series.mean("relative_humidity_2m", ws, we);
       if (humidity !== null) {
@@ -959,7 +1088,39 @@
         factors.push(factor(`夜間の雲量 ${pct(nightCloud)}`, clear * s.nightCloudBonus,
           nightCloud < s.nightCloudClear ? "晴れて地面が冷え込みます" : "雲が布団になって冷え込みません"));
       }
-      return buildScore(s.base, factors);
+
+      // --- 雲海の天井（逆転層）と展望台の高さ（3条件の 2 と 3） ---
+      //
+      // これまでは「霧ができるか」だけを見ていた。だが雲頂が展望台より高ければ、
+      // 条件が揃っていても見下ろせない。中に立つことになる。
+      //
+      // 逆転層が見つかったときだけ効かせる。見つからないのは
+      // 「天井が無い」のか「モデルが捉えていない」のか区別できないので、
+      // その場合は何も足さない・引かない。分かることだけで判断する。
+      const elevation = input.elevation;
+      const inv = inversionBase(series, ws, we);
+      let ceiling = null, ceilingReason = "";
+      if (inv && inv.height !== null && elevation !== null && elevation !== undefined) {
+        const margin = elevation - inv.height;
+        if (margin >= s.aboveMargin) {
+          factors.push(factor(`雲海の天井 約${Math.round(inv.height)}m`, s.aboveBonus,
+            `逆転層がここにあり、雲はこれより上へ育ちません。展望台（${Math.round(elevation)}m）はその上なので見下ろせます`));
+        } else {
+          factors.push(factor(`雲海の天井 約${Math.round(inv.height)}m`, 0,
+            `逆転層がここにあり、展望台（${Math.round(elevation)}m）はその${margin >= 0 ? "すぐ上で縁になります" : "下。霧の中に入ります"}`));
+          ceiling = s.insideCeiling;
+          ceilingReason = margin >= 0 ? "雲海の縁で見下ろせない" : "雲海の中に入ってしまう";
+        }
+      }
+
+      // 成因を名指しする。種類が見え方そのものになるので、点数だけより役に立つ。
+      const kind = cloudSeaKind({
+        range, wind, prevRain, nightCloud, humidity,
+        month: new Date(ws).getMonth() + 1,
+        hasInversion: !!(inv && inv.height !== null),
+      });
+      if (kind.note) factors.push(factor(`型: ${kind.name}`, 0, kind.note));
+      return buildScore(s.base, factors, ceiling, ceilingReason);
     },
   };
 
@@ -1603,7 +1764,8 @@
 
   const Sorami = {
     Geo, JstCal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
-    HOME_VARS, OFFSET_VARS, CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
+    HOME_VARS, OFFSET_VARS, PROFILE_LEVELS, PROFILE_VARS, needsProfile,
+    CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
     rankOf, confidenceOf, confidenceOfEnsemble, phrasing, leadTimePenalty,
     ensembleSpread, fetchEnsemble, ENSEMBLE_VARS, ENSEMBLE_MEMBERS, ENSEMBLE_MODEL,

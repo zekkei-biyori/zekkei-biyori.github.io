@@ -1,0 +1,84 @@
+/*
+ * 雲海の判定の回帰テスト。
+ *
+ * 雲海が見えるには3つ要る（三菱自動車「雲海の仕組み」）:
+ *   1. 低いところで霧ができる
+ *   2. 逆転層が天井になって雲頂高度が決まる
+ *   3. 観察者がその雲頂より高い位置にいる
+ * 3 をまったく見ていなかったので、点数が高くても現地で霧の中に立つことがあり得た。
+ */
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const S = require("./sorami-core.js");
+
+let pass = 0, fail = 0;
+const ok = (c, label, detail = "") => {
+  if (c) { pass++; console.log(`  ok   ${label}`); }
+  else { fail++; console.log(`  FAIL ${label}${detail ? "  " + detail : ""}`); }
+};
+
+// 気温が高度とともに下がる（逆転なし）／途中から上がる（逆転あり）分布を作る。
+const day = Date.UTC(2026, 10, 15) - 9 * 3600000;
+const times = Array.from({ length: 48 }, (_, i) => day + i * 3600000);
+const build = (profile, surface = {}) => {
+  const cols = {
+    temperature_2m: times.map((_, i) => (i % 24 >= 12 && i % 24 <= 15 ? 18 : 4)),
+    wind_speed_10m: times.map(() => surface.wind ?? 0.5),
+    relative_humidity_2m: times.map(() => surface.humidity ?? 95),
+    cloud_cover: times.map(() => surface.cloud ?? 5),
+    precipitation: times.map(() => surface.rain ?? 0),
+  };
+  for (const [lvl, [h, t]] of Object.entries(profile)) {
+    cols[`geopotential_height_${lvl}hPa`] = times.map(() => h);
+    cols[`temperature_${lvl}hPa`] = times.map(() => t);
+    cols[`relative_humidity_${lvl}hPa`] = times.map(() => 95);
+  }
+  return new S.Series(times, cols);
+};
+const run = (home, elevation) => {
+  const input = { home, offsets: {}, lat: 35.3, lon: 134.83,
+    terrain: "basinRim", elevation, lightPollution: null, air: null };
+  const w = S.SCORERS.seaOfClouds.window(day + 24 * 3600000, input);
+  const r = S.SCORERS.seaOfClouds.score(w, input);
+  return r;
+};
+// 250m から上が暖かい＝逆転層の底が 250m
+const withInversion = { 1000: [80, 3], 975: [250, 3], 950: [500, 8], 925: [760, 7], 900: [1000, 6], 850: [1500, 2] };
+// 単調に下がる＝逆転なし
+const noInversion   = { 1000: [80, 8], 975: [250, 7], 950: [500, 6], 925: [760, 5], 900: [1000, 4], 850: [1500, 0] };
+
+console.log("== 観察者が雲海の上か中か ==");
+const above = run(build(withInversion), 800);   // 逆転層の底 250m より十分上
+const inside = run(build(withInversion), 200);  // 逆転層より下＝霧の中
+ok(!above.unavailable && !inside.unavailable, "どちらも採点できる");
+ok(above.score > inside.score, "見下ろせるほうが高い", `上${above.score.toFixed(0)} / 中${inside.score.toFixed(0)}`);
+ok(S.rankOf(inside.score).key === "poor", "霧の中に入る日は「不向き」", S.rankOf(inside.score).label);
+ok(above.factors.some((f) => f.detail && f.detail.includes("見下ろせます")), "見下ろせると書く");
+ok(inside.factors.some((f) => f.detail && f.detail.includes("霧の中に入ります")), "中に入ると書く");
+
+console.log("== 逆転層が見つからないときは何もしない ==");
+// 「天井が無い」のか「モデルが捉えていない」のか区別できない。
+const flat = run(build(noInversion), 800);
+ok(!flat.factors.some((f) => f.label.startsWith("雲海の天井")), "天井の行を出さない");
+ok(flat.score > inside.score, "見つからないことを理由に下げない",
+  `逆転なし${flat.score.toFixed(0)} / 中に入る${inside.score.toFixed(0)}`);
+
+console.log("== 成因を名指しする ==");
+const radiative = run(build(withInversion, { rain: 0, cloud: 5 }), 800);
+ok(radiative.factors.some((f) => f.label.includes("放射霧")), "冷え込みが効いていれば放射霧",
+  radiative.factors.filter((f) => f.label.startsWith("型:")).map((f) => f.label).join(""));
+const afterRain = run(build(withInversion, { rain: 3, cloud: 5 }), 800);
+ok(afterRain.factors.some((f) => f.label.includes("雨上がり")), "前日に雨があれば雨上がりの雲海",
+  afterRain.factors.filter((f) => f.label.startsWith("型:")).map((f) => f.label).join(""));
+
+console.log("== モデルに霧そのものを予測させない ==");
+// 放射霧は 5km 格子・面の間隔 230m のモデルが解像できない。
+// 気圧面の湿度で霧を判定させたら、雲海スポット10地点×7日のうち69件が
+// 「下層が乾いている」になり全部15点になった。
+const core = fs_read();
+function fs_read() { return require("node:fs").readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8"); }
+ok(!/satRH/.test(core), "気圧面の湿度で霧の有無を判定していない");
+ok(/function inversionBase/.test(core), "分布からは逆転層の高さだけを読む");
+
+console.log(`\n${fail === 0 ? "CLOUDSEA OK" : "FAILED"} — ${pass} 件成功 / ${fail} 件失敗`);
+process.exit(fail === 0 ? 0 : 1);

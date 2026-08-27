@@ -285,8 +285,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827093431"></script>
-<script src="sorami-core.js?v=20260827093431"></script>
+<script src="spots.js?v=20260827100420"></script>
+<script src="sorami-core.js?v=20260827100420"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -412,7 +412,8 @@ async function load(force) {
   try {
     // 光害はその地点の素質なので予報と並行に取得する。取れなくても致命的ではない。
     const [fetched, lp] = await Promise.all([
-      S.fetchForecast(place.latitude, place.longitude),
+      // 鉛直分布は雲海を見下ろせる地点でだけ取る。平地では丸ごと不要（+99KB）。
+      S.fetchForecast(place.latitude, place.longitude, 8, place),
       S.LightPollution.lookup(place.latitude, place.longitude).catch(() => null),
     ]);
     bundle = fetched;

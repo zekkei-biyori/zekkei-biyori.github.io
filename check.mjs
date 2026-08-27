@@ -36,7 +36,7 @@ for (const site of SITES) {
   let bundle, lp = null;
   try {
     [bundle, lp] = await Promise.all([
-      S.fetchForecast(site.lat, site.lon),
+      S.fetchForecast(site.lat, site.lon, 8, { latitude: site.lat, longitude: site.lon, elevation: site.elevation }),
       S.LightPollution.lookup(site.lat, site.lon).catch(() => null),
     ]);
   } catch (e) { console.error(`  ${site.name}: 取得失敗 ${e.message}`); await sleep(15000); continue; }
@@ -120,9 +120,12 @@ const g = (s, id) => (results[s] && results[s].phenomena[id]) || null;
 
 const tokyoStar = g("東京", "starrySky"), achiStar = g("阿智村", "starrySky");
 if (tokyoStar && achiStar) {
-  check("光害の少ない阿智村のほうが東京より星空が高い",
-    achiStar.unavailable || tokyoStar.unavailable ? true : achiStar.score > tokyoStar.score,
-    `阿智村 ${achiStar.score} vs 東京 ${tokyoStar.score}`);
+  const bothZero = achiStar.score === 0 && tokyoStar.score === 0;
+  check("光害の少ない阿智村のほうが東京より星空が高い（両方0の日は判定しない）",
+    achiStar.unavailable || tokyoStar.unavailable || bothZero
+      ? true : achiStar.score > tokyoStar.score,
+    bothZero ? "両方0（雲で見えない日）なので判定を見送り"
+             : `阿智村 ${achiStar.score} vs 東京 ${tokyoStar.score}`);
 }
 check("東京は標高10mなので雲海が対象外",
   !!(g("東京", "seaOfClouds") && g("東京", "seaOfClouds").unavailable),
