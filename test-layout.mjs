@@ -69,7 +69,14 @@ ok(/id="backBtn"/.test(html), "詳細に戻るボタンがある");
 ok(!/この先7日/.test(html), "戻り先を日数で呼ばない（詳細にも同じ7日間がある）");
 ok(/id="backBtn"[^>]*>← 一覧にもどる/.test(html), "戻り先は一覧だと書く");
 
-ok(/\$\("records"\)\.hidden = inDetail/.test(html), "詳細を読むときに記録を挟まない");
+// 記録はホームに置いていた。判断に使わないものを、判断する画面に混ぜない。
+ok(/location\.hash === "#\/records"/.test(html), "記録は自前のURLを持つ");
+ok(/id="recordsView"/.test(html), "記録は別画面");
+ok(/id="recordsBack"/.test(html), "記録から戻るボタンがある");
+ok(/\$\("recordsView"\)\.hidden = !inRecords/.test(html), "3画面を出し分ける");
+ok(/\$\("placeButton"\)\.hidden = inRecords/.test(html), "記録を読むときは地点と実況を出さない");
+// .place-row の display:flex が [hidden] の display:none に勝ち、地点カードが消えなかった。
+ok(/\[hidden\] \{ display: none !important; \}/.test(code), "hidden が display 指定に負けないようにする");
 ok(/listScrollY/.test(html), "一覧へ戻ったとき元の位置に戻す");
 // 詳細の中で現象を替えるたびに履歴を積むと、戻るのに何度も押させることになる。
 ok(/location\.replace/.test(html), "詳細内の切り替えは履歴を積まない");
@@ -151,14 +158,41 @@ ok(got.every((v, i) => v === i),
 // 同じ判定（SunsetWx特許）で対になる2つ。離すと見比べられない。
 ok(orderOf("sunset") === orderOf("sunrise") + 1, "朝焼けの次が夕焼け");
 
-console.log("== 記録カードから答えられる ==");
+console.log("== 訊き方を現象に合わせる ==");
+// 点数の意味が現象で違う。日はほぼ毎日沈み多少は色づくので、
+// 夕焼けに「見えたか」を訊くと何点でもほぼ100%になり、点数の甘辛が測れない。
+const coreSrc = fs.readFileSync(new URL("./sorami-core.js", import.meta.url), "utf8");
+ok(/RECORD_OUTCOMES/.test(coreSrc), "訊き方を現象ごとに持つ");
+for (const id of ["sunrise", "sunset", "starrySky"]) {
+  ok(new RegExp(id + ': \\{ name: "[^"]+", icon: "[^"]+", order: \\d+, record: "quality"').test(coreSrc),
+    `${id} は質を訊く`);
+}
+for (const id of ["seaOfClouds", "rainbow", "rime", "diamondDust"]) {
+  ok(new RegExp(id + ': \\{ name: "[^"]+", icon: "[^"]+", order: \\d+, record: "occurrence"').test(coreSrc),
+    `${id} は出たかを訊く`);
+}
+ok(/期待以上[\s\S]{0,40}想定どおり[\s\S]{0,40}期待外れ/.test(coreSrc), "質は3段階で訊く");
+// 同じ回に別々の答えが入らないよう、押す場所は1箇所で作る。
+ok(/function outcomeButtons/.test(html), "選択肢を作る場所が1つ");
+ok(html.match(/data-outcome="\$\{k\}"/g).length === 1, "選択肢を組み立てる箇所が1つだけ");
+ok(/qualityCalibration/.test(html) && /occurrenceCalibration/.test(html),
+  "較正のグラフも訊き方ごとに分ける");
+ok(/inBand\(list, lo\)/.test(html), "どちらも同じ帯で集計する");
+ok(!/DD・虹/.test(html), "内部の略称を画面に出さない");
+ok(/background:var\(--good\)/.test(html) && !/fill" style="width:\$\{rate \* 100\}%;background:\$\{RANK_COLOR/.test(html),
+  "出たかどうかの棒は単色（隣で色が答えを表すので意味を重ねない）");
+
+console.log("== ホームで答えられる ==");
 // 書き出し・読み込みが記録カードで唯一のボタンだったので、
 // 「記録するには一度書き出さないといけない」と読めた。本来の操作は詳細ページにあり、
 // 記録カードからは辿れなかった。
 ok(/function renderPending/.test(html), "終わったのに未回答の回を出す");
 ok(/id="recPending"/.test(html), "#recPending がある");
-const pend = html.slice(html.indexOf("function renderPending"), html.indexOf("function renderPending") + 1600);
-ok(/data-outcome=/.test(pend), "記録カードの中に「見えた／見えなかった」がある");
+const pend = html.slice(html.indexOf("function renderPending"),
+                        html.indexOf("function outcomeButtons"));
+ok(/outcomeButtons\(id, ev\.peak/.test(pend), "ホームの一覧に押す場所が付く");
+ok(/\$\("recPending"\)\.hidden = hidden \|\| !out\.length/.test(pend),
+  "答える回が無ければホームに何も出さない");
 ok(/ev\.window\[1\] > now\) continue/.test(pend), "終わった回だけ聞く");
 ok(/3 \* 86400000/.test(pend), "古すぎる回は聞かない");
 ok(/findSighting\(id, ev\.peak\)\) continue/.test(pend), "答えた回は二度聞かない");
@@ -166,14 +200,14 @@ ok(/out\.slice\(0, 4\)/.test(pend), "一度に出す件数を絞る");
 
 // 描画より先に配線していたため、記録カードのボタンだけ無反応だった。
 const wire = code.indexOf('querySelectorAll("[data-outcome]")');
-const draw = code.indexOf("renderRecords(now)");
+const draw = code.indexOf("renderRecords(now,");
 ok(draw > -1 && wire > draw, "描画をすべて終えてから押下を配線する");
 
 // 主要な操作に見えないよう、控えの操作は説明文の中へ落とす。
-const recCard = html.slice(html.indexOf('id="records"'), html.indexOf('id="records"') + 1400);
+const recCard = html.slice(html.indexOf('id="recordsView"'), html.indexOf('id="recordsView"') + 1600);
 const headEnd = recCard.indexOf("</div>");
 ok(recCard.indexOf('id="exportBtn"') > recCard.indexOf('id="recBody"'),
-  "書き出し・読み込みが記録カードの末尾にある");
+  "書き出し・読み込みが記録画面の末尾にある");
 ok(!/exportBtn/.test(recCard.slice(0, headEnd)), "書き出しが見出しの隣に無い");
 ok(/端末に保存されます/.test(recCard), "保存先が端末であることを書く");
 

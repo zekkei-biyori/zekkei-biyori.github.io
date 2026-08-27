@@ -1369,49 +1369,68 @@
   // どの行も同じ7日を持つので「直近」に意味がなく、開くたびに行が入れ替わって
   // 目で追えなくなる。位置が動かないほうが読みやすい。
   const PHENOMENA = {
-    sunset: { name: "夕焼け", icon: "🌇", order: 1,
+    sunset: { name: "夕焼け", icon: "🌇", order: 1, record: "quality",
       ranks: ["圧巻", "よく染まる", "ほんのり", "期待薄"],
       says: ["空一面が燃えるように染まるかもしれません",
              "きれいに色づきそうです",
              "淡く色づく程度になりそうです",
              "色づきは弱そうです"] },
-    starrySky: { name: "星空", icon: "✨", order: 2,
+    starrySky: { name: "星空", icon: "✨", order: 2, record: "quality",
       ranks: ["満天", "よく見える", "そこそこ", "期待薄"],
       says: ["数えきれないほどの星が見えるかもしれません",
              "主な星座はよく見えそうです",
              "明るい星なら見えそうです",
              "星は見えにくそうです"] },
-    sunrise: { name: "朝焼け", icon: "🌅", order: 0,
+    sunrise: { name: "朝焼け", icon: "🌅", order: 0, record: "quality",
       ranks: ["圧巻", "よく染まる", "ほんのり", "期待薄"],
       says: ["朝の空が一面染まるかもしれません",
              "きれいに色づきそうです",
              "淡く色づく程度になりそうです",
              "色づきは弱そうです"] },
-    seaOfClouds: { name: "雲海", icon: "🌫️", order: 4,
+    seaOfClouds: { name: "雲海", icon: "🌫️", order: 4, record: "occurrence",
       ranks: ["大雲海", "出そう", "五分五分", "期待薄"],
       says: ["谷を埋めつくす雲海が期待できます",
              "雲海が出る条件が揃っています",
              "出るかどうかは五分五分です",
              "雲海は出にくそうです"] },
-    rainbow: { name: "虹", icon: "🌈", order: 3,
+    rainbow: { name: "虹", icon: "🌈", order: 3, record: "occurrence",
       ranks: ["好条件", "出るかも", "わずかに", "期待薄"],
       says: ["日差しと雨が重なり、虹が架かるかもしれません",
              "日差しと雨が重なりそうです",
              "条件がわずかに揃っています",
              "虹は出にくそうです"] },
-    rime: { name: "霧氷", icon: "❄️", order: 5,
+    rime: { name: "霧氷", icon: "❄️", order: 5, record: "occurrence",
       ranks: ["見頃", "着きそう", "わずかに", "期待薄"],
       says: ["枝が白く覆われた霧氷が期待できます",
              "枝が白くなりそうです",
              "うっすら着く程度かもしれません",
              "霧氷は着きにくそうです"] },
-    diamondDust: { name: "ダイヤモンドダスト", icon: "💠", order: 6,
+    diamondDust: { name: "ダイヤモンドダスト", icon: "💠", order: 6, record: "occurrence",
       ranks: ["好条件", "期待できる", "わずかに", "期待薄"],
       says: ["空気中の氷がきらめくかもしれません",
              "条件はまずまず整っています",
              "発生する可能性は低めです",
              "発生しにくい条件です"] },
   };
+
+  // 記録で何を訊くか。点数の意味が現象で違うので、質問も変える。
+  //
+  //   occurrence（雲海・霧氷・ダイヤモンドダスト・虹）
+  //     出るか出ないかの現象。点数は「出る見込み」に近いので「見えたか」で確かめられる。
+  //     外すと未明の移動が無駄になる側でもあり、記録の価値がいちばん高い。
+  //
+  //   quality（朝焼け・夕焼け・星空）
+  //     点数は「どれくらい染まるか／どれくらい見えるか」という質。
+  //     日はほぼ毎日沈み多少は色づくので、「見えたか」を訊くと何点でも
+  //     ほぼ100%になり、点数の甘辛が測れない。期待に対してどうだったかを訊く。
+  const RECORD_OUTCOMES = {
+    occurrence: [["seen", "見えた"], ["missed", "見えなかった"], ["unchecked", "確認せず"]],
+    quality: [["better", "期待以上"], ["asExpected", "想定どおり"], ["worse", "期待外れ"],
+              ["unchecked", "確認せず"]],
+  };
+  const recordKind = (id) => PHENOMENA[id]?.record ?? "occurrence";
+  const outcomesFor = (id) => RECORD_OUTCOMES[recordKind(id)];
+
 
   /// その現象での言い方を返す。汎用の RANKS より、こちらを画面に出す。
   function phrasing(phenomenonId, rank) {
@@ -1731,6 +1750,8 @@
       }
       return merged;
     },
+    // 標準大気の気温減率。標高差のある観測点の値をその地点の高さへ直すのに使う。
+    lapseRateCPerKm: 6.5,
     // アメダスは平地に多い。山の上の地点では最寄りでも1000m以上低いことがあり、
     // 谷底の気温をその地点の実況として出すと10℃近く違う。
     // 「ここは何℃低い見込み」と注記するだけでは、見出しに違う数字が残る。
@@ -1742,7 +1763,7 @@
       if (obs.targetElevation === null || obs.targetElevation === undefined) return null;
       const dz = obs.targetElevation - st.elevation;         // ここ - 観測点
       if (Math.abs(dz) < 300) return null;
-      return { value: obs.temperature - Nowcast.lapseRateCPerKm * dz / 1000,
+      return { value: obs.temperature - Amedas.lapseRateCPerKm * dz / 1000,
                raw: obs.temperature, dz, station: st };
     },
     // 何をどう直した値なのかを書く。天気と湿度は直しようがないので、
@@ -1797,66 +1818,15 @@
     },
   };
 
-  // 予報と実況の突き合わせ。8/22 に Pi 5 が豪雨の最中に「晴れ」と表示した構図を再発させない。
-  const Nowcast = {
-    rainThresholdMm: 0.5, temperatureToleranceC: 5,
-    // 標準大気の気温減率。標高差のある観測点と予報を比べるときに補正する。
-    lapseRateCPerKm: 6.5,
-    // 減率そのもののばらつき（乾燥断熱 9.8／湿潤 5 前後）。
-    // 標高差が大きいほど補正が当てにならないので、その分だけ許容幅を広げる。
-    lapseUncertaintyCPerKm: 3,
-    compare(obs, home) {
-      const median = (v) => {
-        const values = Object.values(home.byModel)
-          .filter((s) => s.isSupported(v))
-          .map((s) => s.valueAt(v, obs.observedAt))
-          .filter((x) => x !== null);
-        return Curve.median(values);
-      };
-      const out = [];
-      const forecastRain = median("precipitation");
-      const observedRain = obs.precipitation1h ?? obs.precipitation10m;
-      if (observedRain !== null && forecastRain !== null) {
-        if (observedRain >= Nowcast.rainThresholdMm && forecastRain < 0.1) {
-          out.push({ severe: observedRain >= 1.0,
-            message: `予報は降水なしですが、実況で ${f1(observedRain)}mm/h を観測しています` });
-        } else if (forecastRain >= 1.0 && observedRain === 0) {
-          out.push({ severe: forecastRain >= 2.0,
-            message: `予報は降水 ${f1(forecastRain)}mm ですが、実況では降っていません` });
-        }
-      }
-      const ot = obs.temperature, ft = median("temperature_2m");
-      // アメダスは平地に多く、山の上の地点では最寄りでも1000m以上低いことがある。
-      // 蔵王(予報標高1764m)を山形(153m)の実況と比べて「実況24.9℃／予報15.1℃」と出していたが、
-      // 減率で補正すると14.4℃で、ずれていたのは標高であって予報ではなかった。
-      // 補完された値だけを除外していたので、最寄り地点そのものが低い場合を取りこぼしていた。
-      const tempStation = obs.fieldStation?.temperature ?? null;
-      const target = home.grid?.elevation ?? null;   // 予報が成り立つ標高
-      const dzKm = (tempStation && typeof tempStation.elevation === "number" && target !== null)
-        ? (target - tempStation.elevation) / 1000 : 0;
-      const adjusted = ot === null ? null : ot - Nowcast.lapseRateCPerKm * dzKm;
-      const tolerance = Nowcast.temperatureToleranceC + Math.abs(dzKm) * Nowcast.lapseUncertaintyCPerKm;
-      if (adjusted !== null && ft !== null && Math.abs(adjusted - ft) >= tolerance) {
-        const observed = Math.abs(dzKm) * 1000 >= 200
-          ? `実況 ${f1(ot)}℃（${tempStation.name} 標高${Math.round(tempStation.elevation)}m、`
-            + `標高差${Math.round(dzKm * 1000) > 0 ? "+" : ""}${Math.round(dzKm * 1000)}m を補正して ${f1(adjusted)}℃）`
-          : `実況 ${f1(ot)}℃`;
-        out.push({ severe: Math.abs(adjusted - ft) >= tolerance + 3,
-          message: `気温が${observed} に対し予報 ${f1(ft)}℃ とずれています` });
-      }
-      return out;
-    },
-  };
-
   const Sorami = {
     Geo, Cal, JstCal: Cal, Sun, Moon, Curve, T, Series, MODELS, MODEL_NAMES,
     HOME_VARS, OFFSET_VARS, PROFILE_LEVELS, PROFILE_VARS, needsProfile,
-    CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS,
+    CLOUD_LAYERS, SCORERS, PHENOMENA, RANKS, RECORD_OUTCOMES, recordKind, outcomesFor,
     decodeLocation, buildURL, fetchForecast, evaluate, evaluateWeek, readingAt,
     setTimezoneOffset, rankOf, confidenceOf, confidenceOfEnsemble, phrasing, leadTimePenalty,
     ensembleSpread, fetchEnsemble, ENSEMBLE_VARS, ENSEMBLE_MEMBERS, ENSEMBLE_MODEL,
     SPREAD_TO_EXPECTED_ERROR, rankAgreement,
-    Amedas, Nowcast, LightPollution,
+    Amedas, LightPollution,
   };
   global.Sorami = Sorami;
   if (typeof module !== "undefined" && module.exports) module.exports = Sorami;
