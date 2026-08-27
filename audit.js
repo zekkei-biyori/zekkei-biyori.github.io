@@ -103,10 +103,19 @@ window.__audit = function () {
   }
 
   // 5) タップ領域が小さすぎる（44px 未満）
+  // 見た目が小さくても ::after で当たり判定を広げているものがある（.tap）。
+  // 描画上の高さだけで数えると、対処済みのものを毎回挙げて本物が埋もれる。
+  const tapHeight = (b) => {
+    const r = b.getBoundingClientRect();
+    const after = getComputedStyle(b, "::after");
+    if (after.content === "none" || after.position !== "absolute") return r.height;
+    const h = parseFloat(after.height);
+    return Number.isFinite(h) ? Math.max(r.height, h) : r.height;
+  };
   const small = [...document.querySelectorAll("main button, main a, main select")].filter((b) => {
     const r = b.getBoundingClientRect();
-    return r.height > 0 && r.height < 32;
-  }).map((b) => ({ txt: (b.textContent || "").trim().slice(0, 14), h: Math.round(b.getBoundingClientRect().height) }));
+    return r.height > 0 && tapHeight(b) < 32;
+  }).map((b) => ({ txt: (b.textContent || "").trim().slice(0, 14), h: Math.round(tapHeight(b)) }));
   if (small.length) add("タップ領域が小さい", { 件数: small.length, 例: small.slice(0, 5) });
 
   return report;

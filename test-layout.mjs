@@ -151,5 +151,31 @@ ok(got.every((v, i) => v === i),
 // 同じ判定（SunsetWx特許）で対になる2つ。離すと見比べられない。
 ok(orderOf("sunset") === orderOf("sunrise") + 1, "朝焼けの次が夕焼け");
 
+console.log("== 記録カードから答えられる ==");
+// 書き出し・読み込みが記録カードで唯一のボタンだったので、
+// 「記録するには一度書き出さないといけない」と読めた。本来の操作は詳細ページにあり、
+// 記録カードからは辿れなかった。
+ok(/function renderPending/.test(html), "終わったのに未回答の回を出す");
+ok(/id="recPending"/.test(html), "#recPending がある");
+const pend = html.slice(html.indexOf("function renderPending"), html.indexOf("function renderPending") + 1600);
+ok(/data-outcome=/.test(pend), "記録カードの中に「見えた／見えなかった」がある");
+ok(/ev\.window\[1\] > now\) continue/.test(pend), "終わった回だけ聞く");
+ok(/3 \* 86400000/.test(pend), "古すぎる回は聞かない");
+ok(/findSighting\(id, ev\.peak\)\) continue/.test(pend), "答えた回は二度聞かない");
+ok(/out\.slice\(0, 4\)/.test(pend), "一度に出す件数を絞る");
+
+// 描画より先に配線していたため、記録カードのボタンだけ無反応だった。
+const wire = code.indexOf('querySelectorAll("[data-outcome]")');
+const draw = code.indexOf("renderRecords(now)");
+ok(draw > -1 && wire > draw, "描画をすべて終えてから押下を配線する");
+
+// 主要な操作に見えないよう、控えの操作は説明文の中へ落とす。
+const recCard = html.slice(html.indexOf('id="records"'), html.indexOf('id="records"') + 1400);
+const headEnd = recCard.indexOf("</div>");
+ok(recCard.indexOf('id="exportBtn"') > recCard.indexOf('id="recBody"'),
+  "書き出し・読み込みが記録カードの末尾にある");
+ok(!/exportBtn/.test(recCard.slice(0, headEnd)), "書き出しが見出しの隣に無い");
+ok(/端末に保存されます/.test(recCard), "保存先が端末であることを書く");
+
 console.log(`\n${fail === 0 ? "LAYOUT OK" : "FAILED"} — ${pass} 件成功 / ${fail} 件失敗`);
 process.exit(fail === 0 ? 0 : 1);

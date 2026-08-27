@@ -82,6 +82,12 @@
   .lt .lt-h { font-size: 0.72rem; color: var(--tertiary); }
   .lt .lt-l { color: var(--secondary); white-space: nowrap; }
 
+  /* まだ答えていない回。アプリを開いて1タップで済むようにする。 */
+  .pending { padding: 2px 0 4px; }
+  .pending-row { padding: 7px 0; border-top: 1px solid var(--line); }
+  .pending-row:first-of-type { border-top: none; }
+  .pending-row .outcome { margin-top: 6px; }
+
   .back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
           color: var(--accent); font-size: 0.88rem; padding: 0 2px; margin-bottom: 2px; }
 
@@ -252,17 +258,21 @@
   </div>
 
   <div class="card" id="records">
-    <div class="section-h"><h2>記録</h2>
-      <span><span class="muted" id="recCount"></span>
-        <button id="exportBtn" class="muted tap" style="margin-left:8px">書き出し</button>
-        <button id="importBtn" class="muted tap" style="margin-left:6px">読み込み</button>
-        <input type="file" id="importFile" accept=".json" hidden></span></div>
-    <div id="recEmpty" class="tiny" hidden>まだ記録がありません。現象の詳細で「実際に見えましたか？」に答えると、点数が当たっているかを測れるようになります。</div>
+    <div class="section-h"><h2>記録</h2><span class="muted" id="recCount"></span></div>
+    <div id="recPending"></div>
+    <div id="recEmpty" class="tiny" hidden>まだ記録がありません。
+      その回が終わると、ここと現象の詳細に「見えましたか？」が出ます。
+      押すだけで、そのときの点数と気象の値が端末に残ります。</div>
     <div id="recBody" hidden>
       <div class="bins" id="bins"></div>
       <p class="tiny" style="margin-top:6px">横棒が実際に見えた割合、縦線が点数どおりならこうなるはずという水準です。棒が線より短ければ点数が甘く、長ければ辛いということ。記録が無い帯は「—」と出します。</p>
       <div id="recList"></div>
     </div>
+    <p class="tiny" style="margin-top:10px">
+      記録は端末に保存されます。
+      <button id="exportBtn" class="tap" style="color:var(--accent)">書き出し</button>・<button id="importBtn" class="tap" style="color:var(--accent)">読み込み</button>
+      は、別の端末へ移すときや控えを取るときに使います。
+      <input type="file" id="importFile" accept=".json" hidden></p>
   </div>
 
   <p class="tiny" id="footer"></p>
@@ -283,8 +293,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827131227"></script>
-<script src="sorami-core.js?v=20260827131227"></script>
+<script src="spots.js?v=20260827142320"></script>
+<script src="sorami-core.js?v=20260827142320"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -448,6 +458,8 @@ async function loadNowcast() {
     <span class="muted">実況 ${S.JstCal.hhmm(obs.observedAt)}</span>
     <strong>${esc(parts.join(" "))}</strong>
     <span class="tiny" style="margin-left:auto">${esc(obs.station.name)} ${Math.round(obs.distanceKm)}km</span></div>`;
+  const elevationNote = S.Amedas.elevationNote(obs);
+  if (elevationNote) html += `<div class="tiny">${esc(elevationNote)}</div>`;
   for (const line of S.Amedas.supplementSummary(obs)) html += `<div class="tiny">${esc(line)}</div>`;
   for (const d of disagreements) html += `<div class="${d.severe ? "warn" : "notice"}">⚠ ${esc(d.message)}</div>`;
   $("nowcast").innerHTML = html;
@@ -534,11 +546,11 @@ function render() {
     }
   }
 
-  const scope = document.querySelector("main");
-  for (const el of scope.querySelectorAll("[data-outcome]")) {
+  renderRecords(now);
+  // 記録カードの「見えましたか？」も同じ配線に乗せるため、描画をすべて終えてから束ねる。
+  for (const el of document.querySelector("main").querySelectorAll("[data-outcome]")) {
     el.onclick = () => recordOutcome(el.dataset.pid, +el.dataset.peak, el.dataset.outcome);
   }
-  renderRecords();
   $("footer").innerHTML =
     `${bundle ? S.JstCal.hhmm(bundle.fetchedAt) : "—"} 時点の予測。`
     + `${S.MODELS.length}つの数値予報モデル（${S.MODELS.map((m) => S.MODEL_NAMES[m]).join("・")}）の`
@@ -928,13 +940,53 @@ function collectObservations(pid, peak) {
   out._grid_elevation = bundle.home.grid.elevation;
   return out;
 }
-function renderRecords() {
+// まだ答えていない、終わった回。
+//
+// 記録の操作は現象の詳細の中だけにあり、記録カードからは辿れなかった。
+// カードに見えるボタンが「書き出し／読み込み」だけだったので、
+// それが主要な操作に見えていた（実際そう受け取られた）。
+// 答える場所をここに置く。アプリを開いて1タップで済む。
+function renderPending(now) {
+  const out = [];
+  for (const [id, entries] of Object.entries(weeks)) {
+    for (const e of entries) {
+      const ev = e.evaluation;
+      if (!ev || ev.unavailable) continue;
+      if (ev.window[1] > now) continue;                       // まだ終わっていない
+      if (now - ev.window[1] > 3 * 86400000) continue;        // 古すぎる回は覚えていない
+      if (findSighting(id, ev.peak)) continue;                // もう答えた
+      out.push({ id, ev, peak: ev.peak });
+    }
+  }
+  out.sort((a, b) => b.peak - a.peak);
+  if (!out.length) { $("recPending").innerHTML = ""; return; }
+
+  const outcomes = [["seen", "見えた"], ["missed", "見えなかった"], ["unchecked", "確認せず"]];
+  $("recPending").innerHTML = `<div class="pending">
+    <div style="margin-bottom:6px">見えましたか？</div>
+    ${out.slice(0, 4).map(({ id, ev }) => {
+      const meta = S.PHENOMENA[id], color = RANK_COLOR[ev.rank.key];
+      return `<div class="pending-row">
+        <div><span style="font-size:1.06rem">${meta.icon}</span>
+          <strong>${meta.name}</strong>
+          <span class="muted">${S.Cal.relativeDay(ev.peak, now)}${ev.specificTime === false ? "" : " " + S.Cal.hhmmRounded(ev.peak)}</span>
+          ・<span style="color:${color}">${esc(S.phrasing(id, ev.rank).label)} ${Math.round(ev.score)}</span></div>
+        <div class="outcome">${outcomes.map(([k, l]) =>
+          `<button data-outcome="${k}" data-pid="${id}" data-peak="${ev.peak}">${l}</button>`).join("")}</div>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function renderRecords(now) {
+  renderPending(now ?? Date.now());
   const conclusive = sightings.filter((s) => s.outcome !== "unchecked");
   $("recCount").textContent = `確定 ${conclusive.length}件`;
   // 記録がゼロのうちは、空の5帯グラフを毎回出しても読むものがない。
   // 何をすれば貯まるかだけ書く。
   const empty = sightings.length === 0;
-  $("recEmpty").hidden = !empty;
+  // 答える場所が出ているなら、空の案内は要らない。
+  $("recEmpty").hidden = !empty || !!$("recPending").innerHTML;
   $("recBody").hidden = empty;
   if (empty) return;
   let bins = "";

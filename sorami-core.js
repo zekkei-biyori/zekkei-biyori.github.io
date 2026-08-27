@@ -1703,11 +1703,15 @@
     // （大江山の最寄り・坂浦 4km がそうだった）。補完元は距離と標高差を添えて明示する。
     maxSupplementKm: 50,
     merge(primary, candidates, targetElevation) {
-      const merged = { ...primary, supplementedFrom: {} };
+      const merged = { ...primary, supplementedFrom: {}, fieldStation: {},
+                       targetElevation: typeof targetElevation === "number" ? targetElevation : null };
       const fields = [
         ["temperature", "気温"], ["humidity", "湿度"], ["precipitation1h", "降水"],
         ["sunshine1h", "日照"], ["wind", "風"],
       ];
+      // 補完した値だけでなく、最寄り地点が出した値も出所を残す。
+      // 出所を残していなかったため、山上の予報を谷底の観測と比べていることに気づけなかった。
+      for (const [key] of fields) if (primary[key] !== null) merged.fieldStation[key] = primary.station;
       for (const c of candidates) {
         if (c.station.id === primary.station.id) continue;
         if (c.distanceKm > Amedas.maxSupplementKm) continue;
@@ -1720,11 +1724,25 @@
           if (merged[key] === null && c[key] !== null) {
             merged[key] = c[key];
             merged.supplementedFrom[jp] = label;
+            merged.fieldStation[key] = c.station;
           }
         }
         if (merged.precipitation10m === null && c.precipitation10m !== null) merged.precipitation10m = c.precipitation10m;
       }
       return merged;
+    },
+    // アメダスは平地に多い。山の上の地点では最寄りでも1000m以上低いことがあり、
+    // 谷底の気温をその地点の実況として出すと10℃近く違う。標高差は隠さず書く。
+    elevationNote(obs) {
+      const st = obs.fieldStation?.temperature;
+      if (!st || typeof st.elevation !== "number") return null;
+      if (obs.targetElevation === null || obs.targetElevation === undefined) return null;
+      const dz = obs.targetElevation - st.elevation;         // ここ - 観測点
+      if (Math.abs(dz) < 300) return null;
+      const dt = Math.abs(dz) / 1000 * Nowcast.lapseRateCPerKm;
+      return `実況は ${st.name}（標高${Math.round(st.elevation)}m）の値です。`
+        + `ここは ${Math.round(Math.abs(dz))}m ${dz > 0 ? "高い" : "低い"}ので、`
+        + `気温は ${dt.toFixed(dt < 10 ? 1 : 0)}℃ ほど${dz > 0 ? "低い" : "高い"}見込みです。`;
     },
     supplementSummary(obs) {
       const order = ["気温", "湿度", "降水", "日照", "風"];
@@ -1772,6 +1790,11 @@
   // 予報と実況の突き合わせ。8/22 に Pi 5 が豪雨の最中に「晴れ」と表示した構図を再発させない。
   const Nowcast = {
     rainThresholdMm: 0.5, temperatureToleranceC: 5,
+    // 標準大気の気温減率。標高差のある観測点と予報を比べるときに補正する。
+    lapseRateCPerKm: 6.5,
+    // 減率そのもののばらつき（乾燥断熱 9.8／湿潤 5 前後）。
+    // 標高差が大きいほど補正が当てにならないので、その分だけ許容幅を広げる。
+    lapseUncertaintyCPerKm: 3,
     compare(obs, home) {
       const median = (v) => {
         const values = Object.values(home.byModel)
@@ -1793,14 +1816,23 @@
         }
       }
       const ot = obs.temperature, ft = median("temperature_2m");
-      // 気温が標高差の大きい別地点から補完されている場合は比較しない。
-      // 山上の予報と谷底の観測を比べると、気温減率ぶんが「予報のずれ」に見えてしまう
-      // （大江山で実際に誤検知した。標高差-814m ≒ 気温差5℃は物理として正しい）。
-      const tempSupplement = obs.supplementedFrom["気温"] || "";
-      const elevationMismatch = tempSupplement.includes("標高差");
-      if (!elevationMismatch && ot !== null && ft !== null && Math.abs(ot - ft) >= Nowcast.temperatureToleranceC) {
-        out.push({ severe: Math.abs(ot - ft) >= 8,
-          message: `気温が実況 ${f1(ot)}℃ に対し予報 ${f1(ft)}℃ とずれています` });
+      // アメダスは平地に多く、山の上の地点では最寄りでも1000m以上低いことがある。
+      // 蔵王(予報標高1764m)を山形(153m)の実況と比べて「実況24.9℃／予報15.1℃」と出していたが、
+      // 減率で補正すると14.4℃で、ずれていたのは標高であって予報ではなかった。
+      // 補完された値だけを除外していたので、最寄り地点そのものが低い場合を取りこぼしていた。
+      const tempStation = obs.fieldStation?.temperature ?? null;
+      const target = home.grid?.elevation ?? null;   // 予報が成り立つ標高
+      const dzKm = (tempStation && typeof tempStation.elevation === "number" && target !== null)
+        ? (target - tempStation.elevation) / 1000 : 0;
+      const adjusted = ot === null ? null : ot - Nowcast.lapseRateCPerKm * dzKm;
+      const tolerance = Nowcast.temperatureToleranceC + Math.abs(dzKm) * Nowcast.lapseUncertaintyCPerKm;
+      if (adjusted !== null && ft !== null && Math.abs(adjusted - ft) >= tolerance) {
+        const observed = Math.abs(dzKm) * 1000 >= 200
+          ? `実況 ${f1(ot)}℃（${tempStation.name} 標高${Math.round(tempStation.elevation)}m、`
+            + `標高差${Math.round(dzKm * 1000) > 0 ? "+" : ""}${Math.round(dzKm * 1000)}m を補正して ${f1(adjusted)}℃）`
+          : `実況 ${f1(ot)}℃`;
+        out.push({ severe: Math.abs(adjusted - ft) >= tolerance + 3,
+          message: `気温が${observed} に対し予報 ${f1(ft)}℃ とずれています` });
       }
       return out;
     },
