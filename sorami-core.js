@@ -1732,17 +1732,27 @@
       return merged;
     },
     // アメダスは平地に多い。山の上の地点では最寄りでも1000m以上低いことがあり、
-    // 谷底の気温をその地点の実況として出すと10℃近く違う。標高差は隠さず書く。
-    elevationNote(obs) {
+    // 谷底の気温をその地点の実況として出すと10℃近く違う。
+    // 「ここは何℃低い見込み」と注記するだけでは、見出しに違う数字が残る。
+    // 標準大気の減率でその地点の高さへ直した値を出す。観測ではなく推定なので「約」を付ける。
+    estimatedTemperature(obs) {
       const st = obs.fieldStation?.temperature;
       if (!st || typeof st.elevation !== "number") return null;
+      if (obs.temperature === null) return null;
       if (obs.targetElevation === null || obs.targetElevation === undefined) return null;
       const dz = obs.targetElevation - st.elevation;         // ここ - 観測点
       if (Math.abs(dz) < 300) return null;
-      const dt = Math.abs(dz) / 1000 * Nowcast.lapseRateCPerKm;
-      return `実況は ${st.name}（標高${Math.round(st.elevation)}m）の値です。`
-        + `ここは ${Math.round(Math.abs(dz))}m ${dz > 0 ? "高い" : "低い"}ので、`
-        + `気温は ${dt.toFixed(dt < 10 ? 1 : 0)}℃ ほど${dz > 0 ? "低い" : "高い"}見込みです。`;
+      return { value: obs.temperature - Nowcast.lapseRateCPerKm * dz / 1000,
+               raw: obs.temperature, dz, station: st };
+    },
+    // 何をどう直した値なのかを書く。天気と湿度は直しようがないので、
+    // ふもとのままであることも併せて言う。
+    elevationNote(obs) {
+      const est = Amedas.estimatedTemperature(obs);
+      if (!est) return null;
+      return `気温は ${est.station.name}（標高${Math.round(est.station.elevation)}m）の ${f1(est.raw)}℃ から、`
+        + `${Math.round(Math.abs(est.dz))}m ${est.dz > 0 ? "高い" : "低い"}ぶんを補正した推定です。`
+        + `天気・湿度はふもとの値です。`;
     },
     supplementSummary(obs) {
       const order = ["気温", "湿度", "降水", "日照", "風"];

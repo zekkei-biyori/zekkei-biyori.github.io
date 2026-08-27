@@ -68,18 +68,31 @@ const supplemented = obs({
 const msg = messages(supplemented, home(833, { temperature_2m: 20.3 }));
 ok(msg.length === 0, "補完元の標高で補正する（25.7 - 6.5×0.831 = 20.3℃）", JSON.stringify(msg));
 
-console.log("== 実況の標高差を隠さない ==");
-// 警告を止めるだけだと、蔵王で「実況 24.9℃」という10℃違う数字が残る。
+console.log("== 標高差があれば直した値を出す ==");
+// 注記だけ足しても、見出しには10℃違う数字が残る。直した値そのものを出す。
+const est = (t, target, st) =>
+  S.Amedas.estimatedTemperature({ fieldStation: { temperature: st }, targetElevation: target, temperature: t });
 const note = (t, target, st) =>
   S.Amedas.elevationNote({ fieldStation: { temperature: st }, targetElevation: target, temperature: t });
-ok(/山形（標高153m）/.test(note(24.9, 1660, station("山形", 153)) ?? ""), "どこの値かを書く");
-ok(/1507m 高いので、気温は 9\.8℃ ほど低い/.test(note(24.9, 1660, station("山形", 153)) ?? ""),
-  "どれくらい違うかを書く", String(note(24.9, 1660, station("山形", 153))));
-ok(note(26.7, 10, station("東京", 25)) === null, "標高差が小さければ書かない");
-ok(note(27.7, 353, station("和田山", 80)) === null, "273m では書かない（閾値300m）");
-ok(/1140m 低いので、気温は 7\.4℃ ほど高い/.test(note(5.0, 100, station("浪合", 1240)) ?? ""),
-  "観測点のほうが高い場合は逆に書く", String(note(5.0, 100, station("浪合", 1240))));
-ok(note(24.9, null, station("山形", 153)) === null, "地点の標高が分からなければ書かない");
+
+const zaoEst = est(24.9, 1660, station("山形", 153));
+ok(zaoEst !== null && Math.abs(zaoEst.value - 15.1) < 0.05,
+  "山形24.9℃・標高差1507m → 約15.1℃", String(zaoEst?.value));
+ok(zaoEst.raw === 24.9, "元の観測値も残す");
+ok(est(26.7, 10, station("東京", 25)) === null, "標高差が小さければ直さない（そのまま実況）");
+ok(est(27.7, 353, station("和田山", 80)) === null, "273m では直さない（閾値300m）");
+const lowEst = est(5.0, 100, station("浪合", 1240));
+ok(lowEst !== null && Math.abs(lowEst.value - 12.4) < 0.05,
+  "観測点のほうが高ければ上げる方向へ直す", String(lowEst?.value));
+ok(est(24.9, null, station("山形", 153)) === null, "地点の標高が分からなければ直さない");
+ok(est(null, 1660, station("山形", 153)) === null, "気温が欠測なら直さない");
+
+console.log("== 何をどう直したかを書く ==");
+const zaoNote = note(24.9, 1660, station("山形", 153)) ?? "";
+ok(/山形（標高153m）の 24\.9℃/.test(zaoNote), "元の観測点と値を書く", zaoNote);
+ok(/1507m 高いぶんを補正した推定/.test(zaoNote), "推定であることを書く", zaoNote);
+ok(/天気・湿度はふもとの値/.test(zaoNote), "直せない値はふもとのままだと書く", zaoNote);
+ok(note(26.7, 10, station("東京", 25)) === null, "直していなければ注記も出さない");
 
 console.log("== 降水の照合は据え置き ==");
 // 2026-08-22 18:00、練馬で 11.5mm/h の最中に jma_msm が 0.0mm を出していた実例。

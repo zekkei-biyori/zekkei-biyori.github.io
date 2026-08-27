@@ -293,8 +293,8 @@
   </div>
 </dialog>
 
-<script src="spots.js?v=20260827142320"></script>
-<script src="sorami-core.js?v=20260827142320"></script>
+<script src="spots.js?v=20260827143558"></script>
+<script src="sorami-core.js?v=20260827143558"></script>
 <script>
 "use strict";
 const S = window.Sorami;
@@ -452,7 +452,9 @@ async function loadNowcast() {
   const daytime = S.Sun.position(obs.observedAt, place.latitude, place.longitude).elevation > 0;
   const disagreements = bundle ? S.Nowcast.compare(obs, bundle.home) : [];
   const parts = [S.Amedas.condition(obs, daytime)];
-  if (obs.temperature !== null) parts.push(`${obs.temperature.toFixed(1)}℃`);
+  const estimated = S.Amedas.estimatedTemperature(obs);   // 標高差があれば補正した値を出す
+  if (estimated) parts.push(`約${estimated.value.toFixed(1)}℃`);
+  else if (obs.temperature !== null) parts.push(`${obs.temperature.toFixed(1)}℃`);
   if (obs.humidity !== null) parts.push(`湿度${Math.round(obs.humidity)}%`);
   let html = `<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
     <span class="muted">実況 ${S.JstCal.hhmm(obs.observedAt)}</span>
